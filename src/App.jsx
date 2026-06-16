@@ -19,7 +19,7 @@ const C = {
   red: "#9E1B1B",
   slate: "#6E5A55",    // warm slate-brown
 };
-const fmt = (n, dp = 0) => (n < 0 ? "\u2212$" : "$") + Math.abs(Number(n)).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
+const fmt = (n, dp = 0) => (n < 0 ? "−$" : "$") + Math.abs(Number(n)).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 const fmtNum = (n, dp = 0) => Number(n).toLocaleString("en-US", { minimumFractionDigits: dp, maximumFractionDigits: dp });
 
 /* ============================================================
@@ -329,9 +329,9 @@ function PriceTable({ prices, setPrices, years, trend, setTrend, cal = CAL }) {
           <tbody>
             {prices.map((p, yi) => (
               <tr key={yi} style={{ background: yi % 2 ? C.paperWarm : "#fff" }}>
-                <td style={{ padding: "3px 12px", fontSize: 12, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: C.ink }}>{years[yi]}{p.override && <span style={{ color: C.orange, fontSize: 9, marginLeft: 4 }}>{"\u270e"}</span>}</td>
+                <td style={{ padding: "3px 12px", fontSize: 12, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: C.ink }}>{years[yi]}{p.override && <span style={{ color: C.orange, fontSize: 9, marginLeft: 4 }}>{"✎"}</span>}</td>
                 {cell(yi, "steer", 0.05)}{cell(yi, "heifer", 0.05)}{cell(yi, "cull", 0.05)}{cell(yi, "hay", 5)}{cell(yi, "cube", 5)}
-                <td style={{ padding: "3px 6px", textAlign: "center" }}>{p.override && <button onClick={() => resetYear(yi)} title="reset this year to trend" style={{ background: "none", border: "none", color: C.coral, cursor: "pointer", fontSize: 12 }}>{"\u21ba"}</button>}</td>
+                <td style={{ padding: "3px 6px", textAlign: "center" }}>{p.override && <button onClick={() => resetYear(yi)} title="reset this year to trend" style={{ background: "none", border: "none", color: C.coral, cursor: "pointer", fontSize: 12 }}>{"↺"}</button>}</td>
               </tr>
             ))}
           </tbody>
@@ -359,7 +359,7 @@ function ValidationTable({ s, onPick }) {
             return (
               <tr key={run.id} style={{ background: cur ? C.indigo + "14" : (isB ? "#EAF4E6" : (run.id % 2 ? C.paperWarm : "#fff")), outline: cur ? `2px solid ${C.indigo}` : "none", outlineOffset: -2 }}>
                 <td style={{ ...td, textAlign: "left", fontWeight: 700 }}>{run.id}</td>
-                <td style={{ ...td, textAlign: "left", fontFamily: "'Source Sans 3',sans-serif", fontWeight: 600, fontSize: 12 }}>Destock {run.d}% / Restock {run.r}%{isB ? " \u2605" : ""}</td>
+                <td style={{ ...td, textAlign: "left", fontFamily: "'Source Sans 3',sans-serif", fontWeight: 600, fontSize: 12 }}>Destock {run.d}% / Restock {run.r}%{isB ? " ★" : ""}</td>
                 <td style={{ ...td, fontWeight: 800, color: isB ? C.green : C.ink }}>{fmt(run.ncfi)}</td>
                 <td style={td}>{fmt(run.endCash)}</td><td style={td}>{run.nw}%</td>
                 <td style={{ ...td }}><button onClick={() => onPick(run.d, run.r)} style={{ background: cur ? C.indigo : "#fff", color: cur ? "#fff" : C.indigo, border: `1.3px solid ${C.indigo}`, borderRadius: 7, padding: "3px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{cur ? "Set" : "Use"}</button></td>
@@ -421,10 +421,10 @@ function AssumptionsTab({ cal, setCal, resetCal }) {
         <div>
           <h2 style={{ margin: 0, fontFamily: "'Bitter', serif", fontSize: 21, color: C.ink }}>Model assumptions</h2>
           <p style={{ margin: "4px 0 0", color: "#8A8276", fontSize: 13, maxWidth: 680, lineHeight: 1.5 }}>
-            These are the per-cow and whole-ranch values behind the dashboard, taken from the FARM Assistance Excel files (DBG, Fast-Base). They feed the year-by-year engine. Edit any of them and the dashboard recomputes \u2014 the destock/restock timing and prices live on the main tab.
+            These are the per-cow and whole-ranch values behind the dashboard, taken from the FARM Assistance Excel files (DBG, Fast-Base). They feed the year-by-year engine. Edit any of them and the dashboard recomputes — the destock/restock timing and prices live on the main tab.
           </p>
         </div>
-        <button onClick={resetCal} style={{ background: "#fff", border: `1.5px solid ${C.coral}`, color: C.coral, fontWeight: 700, padding: "9px 16px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{"\u21ba"} Reset assumptions</button>
+        <button onClick={resetCal} style={{ background: "#fff", border: `1.5px solid ${C.coral}`, color: C.coral, fontWeight: 700, padding: "9px 16px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{"↺"} Reset assumptions</button>
       </div>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(255px, 1fr))", gap: 16 }}>
         <AssumeCard title="Herd & land" accent={C.teal}>
@@ -474,7 +474,7 @@ function AssumptionsTab({ cal, setCal, resetCal }) {
       </div>
 
       <div style={{ marginTop: 18, padding: "14px 18px", background: C.paperWarm, borderRadius: 13, border: `1px dashed ${C.line}`, fontSize: 12.5, color: "#7A7264", lineHeight: 1.6 }}>
-        <strong style={{ color: C.ink }}>Note:</strong> the headline NCFI, ending cash, and net-worth figures on the dashboard are anchored to the nine published 2026 FARM Assistance runs and scaled by these assumptions. Large departures from the baseline values move the results away from the validated runs \u2014 useful for exploring "what if," but the closer you stay to the defaults, the closer the figures track the official model output.
+        <strong style={{ color: C.ink }}>Note:</strong> the headline NCFI, ending cash, and net-worth figures on the dashboard are anchored to the nine published 2026 FARM Assistance runs and scaled by these assumptions. Large departures from the baseline values move the results away from the validated runs — useful for exploring "what if," but the closer you stay to the defaults, the closer the figures track the official model output.
       </div>
     </div>
   );
@@ -566,13 +566,13 @@ function FinancialsTab({ m, s, years, cal }) {
     { label: "Deferred taxes", vals: defTaxBS },
     { label: "Total liabilities", vals: totLiab, bold: true },
     { label: "NET WORTH", section: true },
-    { label: "Net worth (assets \u2212 liabilities)", vals: netWorth, bold: true },
+    { label: "Net worth (assets − liabilities)", vals: netWorth, bold: true },
     { label: "Cumulative net-worth growth", vals: years.map((_, i) => m.nwGrowth * ((i + 1) / n)), pct: true, bold: true },
   ];
   return (
     <div style={{ paddingTop: 22 }}>
       <div style={{ background: C.paperWarm, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "12px 16px", marginBottom: 20, fontSize: 12.5, color: "#7A7264", lineHeight: 1.5 }}>
-        Year-by-year statements for your current strategy \u2014 <strong style={{ color: C.ink }}>Destock {s.destockPct}% in Yr {s.destockYear}, restock to {s.restockPct}% by Yr {s.restockYear}</strong>. These flow from the engine and update with every change on the dashboard and Assumptions tabs. The early years carry the heavy feeding bill; watch the ending-cash row for the survival picture, not just the averages.
+        Year-by-year statements for your current strategy — <strong style={{ color: C.ink }}>Destock {s.destockPct}% in Yr {s.destockYear}, restock to {s.restockPct}% by Yr {s.restockYear}</strong>. These flow from the engine and update with every change on the dashboard and Assumptions tabs. The early years carry the heavy feeding bill; watch the ending-cash row for the survival picture, not just the averages.
       </div>
       <FinTable title="Income Statement" accent={C.orange} years={years} rows={income} />
       <FinTable title="Cash Flow" accent={C.teal} years={years} rows={cash} />
@@ -617,7 +617,7 @@ function DocTab() {
     <div style={{ paddingTop: 22, maxWidth: 820 }}>
       <h2 style={{ margin: "0 0 6px", fontFamily: "'Bitter', serif", fontSize: 22, color: C.ink }}>How this tool works</h2>
       <p style={{ margin: "0 0 22px", color: "#8A7D77", fontSize: 13.5, lineHeight: 1.55 }}>
-        A reference for the specialist presenting the tool: where the numbers come from, how the model is built, and what each figure means. The aim is a transparent, defensible illustration of the destocking/restocking decision \u2014 not a black box.
+        A reference for the specialist presenting the tool: where the numbers come from, how the model is built, and what each figure means. The aim is a transparent, defensible illustration of the destocking/restocking decision — not a black box.
       </p>
 
       <DocSection title="What decision this illustrates">
@@ -629,21 +629,21 @@ function DocTab() {
         <table style={{ borderCollapse: "collapse", width: "100%", margin: "10px 0", border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
           <tbody>
             <DefRow term="DBG (assumptions)" def="The 2026 input file: herd size, calving rate, weights, cattle prices, feed rations and prices, replacement and sire costs, production costs, and whole-ranch items (off-farm income, hunting, family living). These populate the Assumptions tab." />
-            <DefRow term="FastUnit (herd)" def="The year-by-year cow-herd inventory, confirming the feeding pattern \u2014 full feed in the early drought years, dropping to maintenance as forage recovers." />
+            <DefRow term="FastUnit (herd)" def="The year-by-year cow-herd inventory, confirming the feeding pattern — full feed in the early drought years, dropping to maintenance as forage recovers." />
             <DefRow term="Fast-Base (statements)" def="The 10-year income statement, cash flow, and balance sheet for the base run, used to calibrate the engine's per-cow economics." />
-            <DefRow term="2026 Scenario file" def="Table 3 \u2014 the nine published destock/restock runs (10-year averages of NCFI, ending cash, and net-worth growth). These are the validation anchors." />
+            <DefRow term="2026 Scenario file" def="Table 3 — the nine published destock/restock runs (10-year averages of NCFI, ending cash, and net-worth growth). These are the validation anchors." />
           </tbody>
         </table>
       </DocSection>
 
       <DocSection title="How the model is built (the honest part)">
-        The tool is a <strong>hybrid</strong>, by design. The headline figures \u2014 average NCFI, ending cash, and net-worth growth \u2014 are <strong>anchored to the nine published runs</strong>. When your destock/restock setting matches one of the nine, you see that exact published value. Between the nine, the tool interpolates (inverse-distance weighting). A transparent year-by-year cash engine then drives two things the published averages can't: the <strong>annual trajectory</strong> (the shape of the line) and the <strong>sensitivity to your price and assumption edits</strong>.
+        The tool is a <strong>hybrid</strong>, by design. The headline figures — average NCFI, ending cash, and net-worth growth — are <strong>anchored to the nine published runs</strong>. When your destock/restock setting matches one of the nine, you see that exact published value. Between the nine, the tool interpolates (inverse-distance weighting). A transparent year-by-year cash engine then drives two things the published averages can't: the <strong>annual trajectory</strong> (the shape of the line) and the <strong>sensitivity to your price and assumption edits</strong>.
         <Formula>
           result = published_anchor(destock%, restock%)<br />
           &nbsp;&nbsp;&nbsp;&nbsp;&times; engine(your prices) / engine(baseline prices)<br />
           &nbsp;&nbsp;&nbsp;&nbsp;&times; timing_factor(destock year, restock year)
         </Formula>
-        This keeps the presented numbers tied to real model output while still letting the audience explore "what if calf prices fall 5%/year?" The further you move from the baseline assumptions, the more the result is engine-driven rather than a published value \u2014 useful for exploration, but worth stating when you present.
+        This keeps the presented numbers tied to real model output while still letting the audience explore "what if calf prices fall 5%/year?" The further you move from the baseline assumptions, the more the result is engine-driven rather than a published value — useful for exploration, but worth stating when you present.
       </DocSection>
 
       <DocSection title="The year-by-year engine">
@@ -654,25 +654,25 @@ function DocTab() {
           feed cost&nbsp;&nbsp;&nbsp;= head &times; (full ration while recovering,<br />
           &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; else maintenance feed)<br />
           replacements = (herd growth + culls) &times; bred-cow price<br /><br />
-          NCFI = calf receipts + cull sales \u2212 feed \u2212 production \u2212 replacements
+          NCFI = calf receipts + cull sales − feed − production − replacements
         </Formula>
-        Calibration constants (per-cow feed at full ration \u2248 $1,500, maintenance \u2248 $317, production cost \u2248 $172) come straight from the Fast-Base base statements.
+        Calibration constants (per-cow feed at full ration ≈ $1,500, maintenance ≈ $317, production cost ≈ $172) come straight from the Fast-Base base statements.
       </DocSection>
 
       <DocSection title="What each headline number means">
         <table style={{ borderCollapse: "collapse", width: "100%", margin: "4px 0", border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
           <tbody>
             <DefRow term="Net Cash Farm Income (NCFI)" def="Cash receipts minus cash costs, including the purchase and sale of breeding livestock, but excluding non-cash items like depreciation. The clearest measure of the cash a strategy generates." />
-            <DefRow term="Net Farm Income (NFI)" def="NCFI minus depreciation on purchased breeding stock. It runs below NCFI in the recovery years because newly bought cows carry depreciation \u2014 the pattern the 2011 study highlights, where the held-herd strategies look better on NFI mid-period." />
+            <DefRow term="Net Farm Income (NFI)" def="NCFI minus depreciation on purchased breeding stock. It runs below NCFI in the recovery years because newly bought cows carry depreciation — the pattern the 2011 study highlights, where the held-herd strategies look better on NFI mid-period." />
             <DefRow term="Ending cash reserve" def="Cumulative cash at the end of the horizon, after off-farm income, hunting, family living, and a rough income-tax estimate. This is the liquidity / survival measure." />
             <DefRow term="Real net worth growth" def="Cumulative change in inflation-adjusted net worth (cattle + land + machinery + cash) over the horizon. The long-term wealth measure." />
           </tbody>
         </table>
-        <p style={{ margin: "10px 0 0" }}>The <strong>Financial results</strong> tab presents these year by year across three statements \u2014 an <strong>Income Statement</strong> (receipts, costs, NCFI, NFI), a <strong>Cash Flow</strong> (NCFI plus off-farm and hunting income, less family withdrawals, to an ending cash reserve), and a <strong>Balance Sheet</strong> in the standard form: total assets (cash, livestock, real estate, machinery) less total liabilities (intermediate-term debt and deferred taxes) equals net worth. The balance-sheet structure, real estate, machinery, debt, and deferred taxes follow the published Fast-Base base run; cash and livestock value adjust to the chosen stocking strategy. A herd-inventory row shows the head carried each year. All three statements update live with the dashboard and assumptions.</p>
+        <p style={{ margin: "10px 0 0" }}>The <strong>Financial results</strong> tab presents these year by year across three statements — an <strong>Income Statement</strong> (receipts, costs, NCFI, NFI), a <strong>Cash Flow</strong> (NCFI plus off-farm and hunting income, less family withdrawals, to an ending cash reserve), and a <strong>Balance Sheet</strong> in the standard form: total assets (cash, livestock, real estate, machinery) less total liabilities (intermediate-term debt and deferred taxes) equals net worth. The balance-sheet structure, real estate, machinery, debt, and deferred taxes follow the published Fast-Base base run; cash and livestock value adjust to the chosen stocking strategy. A herd-inventory row shows the head carried each year. All three statements update live with the dashboard and assumptions.</p>
       </DocSection>
 
       <DocSection title="The timing &amp; price controls">
-        <strong>Destock year / amount</strong> and <strong>restock year / amount</strong> place the herd changes anywhere in the horizon; the herd ramps linearly between the destock and restock years. <strong>Forage recovers by</strong> sets when full feeding gives way to maintenance feed. The <strong>price path</strong> holds Year 1 at the 2026 values and evolves later years at the trend you choose (the 2026 baseline trends about \u22123%/year, reflecting the projected cattle-price cycle); any single year can be overridden by typing into the price table.
+        <strong>Destock year / amount</strong> and <strong>restock year / amount</strong> place the herd changes anywhere in the horizon; the herd ramps linearly between the destock and restock years. <strong>Forage recovers by</strong> sets when full feeding gives way to maintenance feed. The <strong>price path</strong> holds Year 1 at the 2026 values and evolves later years at the trend you choose (the 2026 baseline trends about −3%/year, reflecting the projected cattle-price cycle); any single year can be overridden by typing into the price table.
       </DocSection>
 
       <DocSection title="What the tool does not capture">
@@ -692,7 +692,7 @@ function DocTab() {
    ============================================================ */
 const TEAM = [
   { name: "Megan Clayton", email: "Megan.Clayton@ag.tamu.edu", role: "Professor and Extension Specialist", unit: "Rangeland, Wildlife and Fisheries Management" },
-  { name: "Samuel Womble", email: "Sam.Womble@ag.tamu.edu", role: "County Extension Agent \u2014 Agriculture and Natural Resources", unit: "Kerr County Office" },
+  { name: "Samuel Womble", email: "Sam.Womble@ag.tamu.edu", role: "County Extension Agent — Agriculture and Natural Resources", unit: "Kerr County Office" },
   { name: "Gregory Kaase", email: "Gregory.Kaase@ag.tamu.edu", role: "Senior Extension Program Specialist", unit: "Agricultural Economics" },
   { name: "Karl Harborth", email: "karl.harborth@ag.tamu.edu", role: "Assistant Professor and Extension Livestock Specialist", unit: "Animal Science" },
   { name: "Yuri Calil", email: "yuri.calil@ag.tamu.edu", role: "Assistant Professor and Extension Specialist", unit: "Agricultural Economics" },
@@ -717,7 +717,7 @@ function TeamTab() {
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(330px, 1fr))", gap: 14, marginBottom: 30 }}>
         <AboutPoint n={1} title="Why it matters">
-          Recurring, intensifying drought is among the costliest threats to South Texas cow-calf operations. When forage runs short, producers must choose between feeding through at rising cost or selling down the herd \u2014 a decision that shapes profitability, cash flow, and rangeland health for a decade. Many of these choices are made under pressure, with limited time to weigh the long-run economics.
+          Recurring, intensifying drought is among the costliest threats to South Texas cow-calf operations. When forage runs short, producers must choose between feeding through at rising cost or selling down the herd — a decision that shapes profitability, cash flow, and rangeland health for a decade. Many of these choices are made under pressure, with limited time to weigh the long-run economics.
         </AboutPoint>
         <AboutPoint n={2} title="Who it serves">
           South Texas cow-calf producers and the Extension agents and specialists who advise them. The tool is built for use in workshops and one-on-one consultations, where a specialist can walk a producer through the trade-offs using a representative ranch and the producer's own price and herd assumptions.
@@ -726,7 +726,7 @@ function TeamTab() {
           Grounded in the FARM Assistance strategic planning model, this tool turns a peer-reviewed drought-stocking analysis into an interactive, classroom-ready dashboard. Producers can adjust destocking and restocking timing, prices, and herd assumptions and immediately see the projected income, cash flow, and net-worth consequences over a ten-year horizon.
         </AboutPoint>
         <AboutPoint n={4} title="Expected outcome">
-          Producers leave better equipped to plan stocking strategies that protect both profitability and the range. The intended behavioral change is a shift toward proactive, economically informed destocking and restocking decisions \u2014 and lighter, more drought-resilient stocking rates \u2014 rather than reactive, feed-through-it responses.
+          Producers leave better equipped to plan stocking strategies that protect both profitability and the range. The intended behavioral change is a shift toward proactive, economically informed destocking and restocking decisions — and lighter, more drought-resilient stocking rates — rather than reactive, feed-through-it responses.
         </AboutPoint>
       </div>
 
@@ -745,7 +745,7 @@ function TeamTab() {
         ))}
       </div>
       <div style={{ marginTop: 20, background: C.paperWarm, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "14px 18px", fontSize: 12.5, color: "#7A6E68", lineHeight: 1.6 }}>
-        Texas A&amp;M AgriLife Extension Service \u00b7 The Texas A&amp;M University System. Educational programs are open to all without regard to socioeconomic level, race, color, sex, religion, disability, or national origin.
+        Texas A&amp;M AgriLife Extension Service · The Texas A&amp;M University System. Educational programs are open to all without regard to socioeconomic level, race, color, sex, religion, disability, or national origin.
       </div>
     </div>
   );
@@ -782,7 +782,7 @@ export default function App() {
         <div style={{ position: "relative", maxWidth: 1180, margin: "0 auto" }}>
           <div>
             <h1 style={{ margin: 0, fontFamily: "'Bitter', serif", fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em" }}>Ranching in a <span style={{ color: "#E8C9A0" }}>New Climate</span></h1>
-            <div style={{ fontSize: 12, color: "#E3CFCF", marginTop: 2 }}>Stocking strategy during drought \u00b7 destock &amp; restock economics \u00b7 50-cow / 400-acre South Texas ranch (2026 assumptions)</div>
+            <div style={{ fontSize: 12, color: "#E3CFCF", marginTop: 2 }}>Stocking strategy during drought · destock &amp; restock economics · 50-cow / 400-acre South Texas ranch (2026 assumptions)</div>
             <div style={{ fontSize: 11.5, color: "#F0DADA", marginTop: 7, padding: "7px 11px", background: "#ffffff18", borderRadius: 8, borderLeft: "3px solid #E8C9A0", maxWidth: 760, lineHeight: 1.5 }}>
               <strong>Educational use only.</strong> This is a teaching and decision-support tool that illustrates the economics of drought stocking strategies for a representative ranch. It is not investment, financial, tax, or veterinary advice, and its figures should not be applied to an actual operation without guidance from a Texas A&amp;M AgriLife Extension agent or specialist who can account for your herd, land, markets, and finances.
             </div>
@@ -805,14 +805,14 @@ export default function App() {
         <div style={{ position: "sticky", top: 0, zIndex: 30, background: `linear-gradient(${C.paper}, ${C.paper}E6)`, backdropFilter: "blur(6px)", paddingTop: 16, paddingBottom: 13, marginBottom: 8, borderBottom: `1px solid ${C.line}` }}>
           <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", marginBottom: 10, flexWrap: "wrap", gap: 6 }}>
             <h2 style={{ margin: 0, fontFamily: "'Bitter', serif", fontSize: 16, color: C.ink }}>
-              Destock {s.destockPct}% in Yr {s.destockYear} <span style={{ color: "#B9AE9C" }}>{"\u2192"}</span> restock to {s.restockPct}% by Yr {s.restockYear}
+              Destock {s.destockPct}% in Yr {s.destockYear} <span style={{ color: "#B9AE9C" }}>{"→"}</span> restock to {s.restockPct}% by Yr {s.restockYear}
             </h2>
-            <span style={{ fontSize: 11, color: "#8A8276" }}>{s.horizon}-yr horizon \u00b7 prices {trend > 0 ? "+" : ""}{trend}%/yr</span>
+            <span style={{ fontSize: 11, color: "#8A8276" }}>{s.horizon}-yr horizon · prices {trend > 0 ? "+" : ""}{trend}%/yr</span>
           </div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 11 }}>
-            <Stat label="Avg Net Cash Farm Income" value={fmt(m.avgNcfi)} sub={`/yr \u00b7 ${ncfiDelta >= 0 ? "+" : "\u2212"}${fmt(Math.abs(ncfiDelta))} vs no-destock`} accent={C.orange} big />
+            <Stat label="Avg Net Cash Farm Income" value={fmt(m.avgNcfi)} sub={`/yr · ${ncfiDelta >= 0 ? "+" : "−"}${fmt(Math.abs(ncfiDelta))} vs no-destock`} accent={C.orange} big />
             <Stat label="Avg Net Farm Income" value={fmt(m.avgNfi)} sub="after depreciation" accent={C.indigo} />
-            <Stat label={`Ending Cash \u00b7 Yr ${s.horizon}`} value={fmt(m.endCash)} sub="cumulative reserve" accent={C.teal} />
+            <Stat label={`Ending Cash · Yr ${s.horizon}`} value={fmt(m.endCash)} sub="cumulative reserve" accent={C.teal} />
             <Stat label="Real Net Worth Growth" value={Math.round(m.nwGrowth) + "%"} sub={`over ${s.horizon} yrs`} accent={C.green} />
           </div>
         </div>
@@ -820,24 +820,22 @@ export default function App() {
         <div className="two-col" style={{ display: "grid", gridTemplateColumns: "340px 1fr", gap: 16, alignItems: "start" }}>
           {/* LEFT: controls */}
           <div style={{ position: "sticky", top: 132 }}>
-            <Panel title="The decision" subtitle="Destock and restock can fall in any year of the horizon." accent={C.coral}>
-              <Slider label="Planning horizon" value={s.horizon} min={5} max={12} step={1} suffix=" years" accent={C.slate} onChange={(v) => setS((st) => ({ ...st, horizon: v, destockYear: Math.min(st.destockYear, v), restockYear: Math.min(st.restockYear, v) }))} help="Years are shown as Yr 1, Yr 2, \u2026" />
-              <div style={{ height: 1, background: C.line, margin: "4px 0 16px" }} />
+            <Panel title="The decision" subtitle="Destock and restock can fall in any year of the 10-year horizon." accent={C.coral}>
               <Slider label="Destock in" value={s.destockYear} min={1} max={s.horizon} step={1} fmtVal={(v) => "Year " + v} accent={C.coral} onChange={(v) => setS((st) => ({ ...st, destockYear: v, restockYear: Math.max(st.restockYear, v) }))} help="The year you sell the herd down." />
               <Slider label="Destock amount" value={s.destockPct} min={0} max={100} step={5} suffix="%" accent={C.coral} onChange={set("destockPct")} help={s.destockPct === 0 ? "Keep the full herd (feed through)." : "Share of the herd sold down."} />
               <div style={{ height: 1, background: C.line, margin: "4px 0 16px" }} />
               <Slider label="Restock by" value={s.restockYear} min={s.destockYear} max={s.horizon} step={1} fmtVal={(v) => "Year " + v} accent={C.teal} onChange={set("restockYear")} help="The year the herd reaches its restock level." />
-              <Slider label="Restock amount" value={s.restockPct} min={50} max={100} step={5} suffix="%" accent={C.teal} onChange={set("restockPct")} help={s.restockPct >= 100 ? "Rebuild to the original herd size." : "Rebuild only partway \u2014 a lighter permanent herd."} />
+              <Slider label="Restock amount" value={s.restockPct} min={50} max={100} step={5} suffix="%" accent={C.teal} onChange={set("restockPct")} help={s.restockPct >= 100 ? "Rebuild to the original herd size." : "Rebuild only partway — a lighter permanent herd."} />
               <div style={{ height: 1, background: C.line, margin: "4px 0 16px" }} />
               <Slider label="Forage recovers by" value={s.feedRecoverYear} min={1} max={s.horizon} step={1} fmtVal={(v) => "Year " + v} accent={C.green} onChange={set("feedRecoverYear")} help="Full feeding until this year, then maintenance feed as the range recovers." />
               <button onClick={() => { setS({ ...DEFAULTS }); setTrend(DEFAULTS.priceTrend); setPrices(buildPrices(DEFAULTS.horizon, DEFAULTS.priceTrend)); }}
-                style={{ marginTop: 6, width: "100%", background: "#fff", border: `1.5px solid ${C.coral}`, color: C.coral, fontWeight: 700, padding: "9px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{"\u21ba"} Reset to baseline</button>
+                style={{ marginTop: 6, width: "100%", background: "#fff", border: `1.5px solid ${C.coral}`, color: C.coral, fontWeight: 700, padding: "9px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{"↺"} Reset to baseline</button>
             </Panel>
           </div>
 
           {/* RIGHT: visuals */}
           <div>
-            <Panel title="Net income over the planning horizon" subtitle="Net Cash Farm Income (solid) vs. Net Farm Income after depreciation (dashed). NFI lags in recovery years as purchased cows depreciate \u2014 the pattern the 2011 study describes." accent={C.orange}>
+            <Panel title="Net income over the planning horizon" subtitle="Net Cash Farm Income (solid) vs. Net Farm Income after depreciation (dashed). NFI lags in recovery years as purchased cows depreciate — the pattern the 2011 study describes." accent={C.orange}>
               <DualChart years={years} ncfi={m.ncfiTraj} nfi={m.nfiTraj} />
               <div style={{ display: "flex", gap: 18, fontSize: 12, color: "#7A7264", marginTop: 8 }}>
                 <span><span style={{ display: "inline-block", width: 16, height: 4, background: C.orange, borderRadius: 3, marginRight: 6, verticalAlign: "middle" }} />Net Cash Farm Income</span>
@@ -850,14 +848,14 @@ export default function App() {
             </Panel>
 
             <Panel title="Year-by-year price path" accent={C.coral}
-              subtitle="Year 1 holds the 2026 prices; future years evolve at the trend (default flat). Override any single cell to model a specific year. The published runs assumed roughly \u22123%/year, so a flat path reads somewhat higher."
+              subtitle="Year 1 holds the 2026 prices; future years evolve at the trend (default flat). Override any single cell to model a specific year. The published runs assumed roughly −3%/year, so a flat path reads somewhat higher."
               right={<button onClick={() => setShowPrices(!showPrices)} style={{ background: showPrices ? C.coral : "#fff", color: showPrices ? "#fff" : C.coral, border: `1.4px solid ${C.coral}`, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{showPrices ? "Hide" : "Edit prices"}</button>}>
               {showPrices
                 ? <PriceTable prices={prices} setPrices={setPrices} years={years} trend={trend} setTrend={setTrend} cal={cal} />
                 : <div style={{ fontSize: 12.5, color: "#8A8276", lineHeight: 1.5 }}>Prices currently trend <strong style={{ color: C.ink }}>{trend > 0 ? "+" : ""}{trend}%/yr</strong> from Year 1's 2026 values (steer ${prices[0].steer.toFixed(2)}, heifer ${prices[0].heifer.toFixed(2)}, cull ${prices[0].cull.toFixed(2)}/lb; hay ${prices[0].hay}, cubes ${prices[0].cube}/ton). Click <em>Edit prices</em> to set each year by hand.</div>}
             </Panel>
 
-            <Panel title="Validation \u00b7 the nine FARM Assistance runs" accent={C.green}
+            <Panel title="Validation · the nine FARM Assistance runs" accent={C.green}
               subtitle="The headline figures are anchored to these published 2026 model runs; your price edits scale them. Best strategy is starred."
               right={<button onClick={() => setShowValid(!showValid)} style={{ background: showValid ? C.green : "#fff", color: showValid ? "#fff" : C.green, border: `1.4px solid ${C.green}`, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{showValid ? "Hide" : "Show runs"}</button>}>
               {showValid
@@ -871,7 +869,7 @@ export default function App() {
         <div style={{ marginTop: 4, background: `linear-gradient(120deg, #500000, #6B1A1A)`, color: "#fff", borderRadius: 15, padding: "20px 24px" }}>
           <h3 style={{ margin: "0 0 9px", fontFamily: "'Bitter', serif", fontSize: 17, color: "#E8C9A0" }}>Reading the result</h3>
           <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#E6E1D8" }}>
-            Across the 2026 runs, destocking modestly and restocking to a <strong>lighter permanent herd (75%)</strong> tops the field \u2014 the feed-cost and replacement-purchase savings outweigh the lost calf production, and the lighter stocking rate leaves the range better able to withstand the next drought. NCFI shows the cash story; NFI runs below it through the recovery years because newly purchased cows carry depreciation. Off-farm income and hunting support cash flow in every strategy, so the destock/restock choice is what moves the needle on the margin.
+            Across the 2026 runs, destocking modestly and restocking to a <strong>lighter permanent herd (75%)</strong> tops the field — the feed-cost and replacement-purchase savings outweigh the lost calf production, and the lighter stocking rate leaves the range better able to withstand the next drought. NCFI shows the cash story; NFI runs below it through the recovery years because newly purchased cows carry depreciation. Off-farm income and hunting support cash flow in every strategy, so the destock/restock choice is what moves the needle on the margin.
           </p>
         </div>
         </>)}
@@ -883,3 +881,23 @@ export default function App() {
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
