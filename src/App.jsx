@@ -789,10 +789,10 @@ function TeamTab() {
           South Texas cow-calf producers and the Extension agents and specialists who advise them. The tool is built for use in workshops and one-on-one consultations, where a specialist can walk a producer through the trade-offs using a representative ranch and the producer's own price and herd assumptions.
         </AboutPoint>
         <AboutPoint n={3} title="The Extension response">
-          Grounded in the FARM Assistance strategic planning model, this tool turns a peer-reviewed drought-stocking analysis into an interactive, classroom-ready dashboard. Producers can adjust destocking and restocking timing, prices, and herd assumptions and immediately see the projected income, cash flow, and net-worth consequences over a ten-year horizon.
+          Grounded in the FARM Assistance strategic planning model, this tool turns a peer-reviewed drought-stocking analysis into an interactive, classroom-ready dashboard. Producers can adjust destocking and restocking timing, prices, and herd assumptions and immediately see the projected income, cash flow, and net-worth consequences over a ten-year horizon. A built-in optimizer goes a step further: it searches every stocking strategy and surfaces the one that best fits what the producer values — cash today, liquidity, or long-term equity — making the trade-offs explicit rather than abstract.
         </AboutPoint>
         <AboutPoint n={4} title="Expected outcome">
-          Producers leave better equipped to plan stocking strategies that protect both profitability and the range. The intended behavioral change is a shift toward proactive, economically informed destocking and restocking decisions — and lighter, more drought-resilient stocking rates — rather than reactive, feed-through-it responses.
+          Producers leave better equipped to plan stocking strategies that protect both profitability and the range. The intended behavioral change is a shift toward proactive, economically informed destocking and restocking decisions — and lighter, more drought-resilient stocking rates — rather than reactive, feed-through-it responses. By letting producers weigh competing financial goals and a rangeland guardrail side by side, the tool helps them recognize that the right answer depends on their own priorities, and to plan accordingly.
         </AboutPoint>
       </div>
 
@@ -1078,5 +1078,3 @@ export default function App() {
     </div>
   );
 }
-
-
