@@ -421,7 +421,7 @@ function AssumptionsTab({ cal, setCal, resetCal }) {
         <div>
           <h2 style={{ margin: 0, fontFamily: "'Bitter', serif", fontSize: 21, color: C.ink }}>Model assumptions</h2>
           <p style={{ margin: "4px 0 0", color: "#8A8276", fontSize: 13, maxWidth: 680, lineHeight: 1.5 }}>
-            These are the per-cow and whole-ranch values behind the dashboard, taken from the FARM Assistance Excel files (DBG, Fast-Base). They feed the year-by-year engine. Edit any of them and the dashboard recomputes — the destock/restock timing and prices live on the main tab.
+            These are the per-cow and whole-ranch values behind the dashboard, taken from the FARM Assistance input and base-run files. They feed the year-by-year engine. Edit any of them and the dashboard recomputes — the destock/restock timing and prices live on the main tab.
           </p>
         </div>
         <button onClick={resetCal} style={{ background: "#fff", border: `1.5px solid ${C.coral}`, color: C.coral, fontWeight: 700, padding: "9px 16px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{"↺"} Reset assumptions</button>
@@ -628,10 +628,10 @@ function DocTab() {
         Three FARM Assistance sources, all from the Texas A&amp;M AgriLife strategic planning model:
         <table style={{ borderCollapse: "collapse", width: "100%", margin: "10px 0", border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
           <tbody>
-            <DefRow term="DBG (assumptions)" def="The 2026 input file: herd size, calving rate, weights, cattle prices, feed rations and prices, replacement and sire costs, production costs, and whole-ranch items (off-farm income, hunting, family living). These populate the Assumptions tab." />
-            <DefRow term="FastUnit (herd)" def="The year-by-year cow-herd inventory, confirming the feeding pattern — full feed in the early drought years, dropping to maintenance as forage recovers." />
-            <DefRow term="Fast-Base (statements)" def="The 10-year income statement, cash flow, and balance sheet for the base run, used to calibrate the engine's per-cow economics." />
-            <DefRow term="2026 Scenario file" def="Table 3 — the nine published destock/restock runs (10-year averages of NCFI, ending cash, and net-worth growth). These are the validation anchors." />
+            <DefRow term="Assumptions" def="The 2026 FARM Assistance input file: herd size, calving rate, weights, cattle prices, feed rations and prices, replacement and sire costs, production costs, and whole-ranch items (off-farm income, hunting, family living). These populate the Assumptions tab." />
+            <DefRow term="Herd inventory" def="The year-by-year cow-herd inventory, confirming the feeding pattern — full feed in the early drought years, dropping to maintenance as forage recovers." />
+            <DefRow term="Base-run statements" def="The 10-year income statement, cash flow, and balance sheet for the base scenario, used to calibrate the engine's per-cow economics." />
+            <DefRow term="Scenario results" def="The nine published destock/restock runs (10-year averages of net cash farm income, ending cash, and net-worth growth). These are the validation anchors." />
           </tbody>
         </table>
       </DocSection>
@@ -656,7 +656,7 @@ function DocTab() {
           replacements = (herd growth + culls) &times; bred-cow price<br /><br />
           NCFI = calf receipts + cull sales − feed − production − replacements
         </Formula>
-        Calibration constants (per-cow feed at full ration ≈ $1,500, maintenance ≈ $317, production cost ≈ $172) come straight from the Fast-Base base statements.
+        Calibration constants (per-cow feed at full ration ≈ $1,500, maintenance ≈ $317, production cost ≈ $172) come straight from the base-run statements.
       </DocSection>
 
       <DocSection title="What each headline number means">
@@ -668,7 +668,7 @@ function DocTab() {
             <DefRow term="Real net worth growth" def="Cumulative change in inflation-adjusted net worth (cattle + land + machinery + cash) over the horizon. The long-term wealth measure." />
           </tbody>
         </table>
-        <p style={{ margin: "10px 0 0" }}>The <strong>Financial results</strong> tab presents these year by year across three statements — an <strong>Income Statement</strong> (receipts, costs, NCFI, NFI), a <strong>Cash Flow</strong> (NCFI plus off-farm and hunting income, less family withdrawals, to an ending cash reserve), and a <strong>Balance Sheet</strong> in the standard form: total assets (cash, livestock, real estate, machinery) less total liabilities (intermediate-term debt and deferred taxes) equals net worth. The balance-sheet structure, real estate, machinery, debt, and deferred taxes follow the published Fast-Base base run; cash and livestock value adjust to the chosen stocking strategy. A herd-inventory row shows the head carried each year. All three statements update live with the dashboard and assumptions.</p>
+        <p style={{ margin: "10px 0 0" }}>The <strong>Financial results</strong> tab presents these year by year across three statements — an <strong>Income Statement</strong> (receipts, costs, NCFI, NFI), a <strong>Cash Flow</strong> (NCFI plus off-farm and hunting income, less family withdrawals, to an ending cash reserve), and a <strong>Balance Sheet</strong> in the standard form: total assets (cash, livestock, real estate, machinery) less total liabilities (intermediate-term debt and deferred taxes) equals net worth. The balance-sheet structure, real estate, machinery, debt, and deferred taxes follow the published base run; cash and livestock value adjust to the chosen stocking strategy. A herd-inventory row shows the head carried each year. All three statements update live with the dashboard and assumptions.</p>
       </DocSection>
 
       <DocSection title="The timing &amp; price controls">
@@ -876,28 +876,10 @@ export default function App() {
       </main>
 
       <footer style={{ borderTop: `1px solid ${C.line}`, padding: "18px 24px", textAlign: "center", color: "#9A9285", fontSize: 11.5, lineHeight: 1.6 }}>
-        Headline figures anchor to the 2026 FARM Assistance runs (2026_Scenario_Information); the year-by-year engine, calibrated to the Fast-Base base statements, drives the trajectory and price sensitivity. Updated from the 2011 FARM Assistance Focus stocking-strategy study (Young, Dominguez, Paschal, Klose). Texas A&amp;M AgriLife Extension Service.
+        Headline figures anchor to the 2026 FARM Assistance scenario runs; the year-by-year engine, calibrated to the base-run statements, drives the trajectory and price sensitivity. Updated from the 2011 FARM Assistance Focus stocking-strategy study (Young, Dominguez, Paschal, Klose). Texas A&amp;M AgriLife Extension Service.
       </footer>
     </div>
   );
 }
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+ 
