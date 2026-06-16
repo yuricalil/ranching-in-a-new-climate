@@ -211,6 +211,56 @@ function model(s, prices, cal = CAL) {
 function bestRun() { return RUNS.reduce((b, r) => (r.ncfi > b.ncfi ? r : b)); }
 
 /* ============================================================
+   OPTIMIZER — multi-objective constrained search
+   Decision vars: destock% (0..100 step 5), restock% (50..100 step 5)
+   Objective: tunable weighted sum of normalized NCFI, cash, net worth
+   Constraint: optional stocking-rate cap (range-safe variant)
+   Method: exhaustive grid -> provably global optimum, fully transparent
+   ============================================================ */
+function optimize(s, prices, cal, weights, rMaxSafe) {
+  const dGrid = [], rGrid = [];
+  for (let d = 0; d <= 100; d += 5) dGrid.push(d);
+  for (let r = 50; r <= 100; r += 5) rGrid.push(r);
+
+  // 1) evaluate the engine across the whole grid
+  const cells = [];
+  for (const d of dGrid) for (const r of rGrid) {
+    const m = model({ ...s, destockPct: d, restockPct: r }, prices, cal);
+    cells.push({ d, r, ncfi: m.avgNcfi, cash: m.endCash, nw: m.nwGrowth });
+  }
+  // 2) min-max normalize each objective across the feasible set
+  const range = (key) => {
+    const vals = cells.map((c) => c[key]);
+    const lo = Math.min(...vals), hi = Math.max(...vals);
+    return { lo, hi, span: hi - lo || 1 };
+  };
+  const rN = range("ncfi"), rC = range("cash"), rW = range("nw");
+  const norm = (c) => ({
+    ...c,
+    nN: (c.ncfi - rN.lo) / rN.span,
+    nC: (c.cash - rC.lo) / rC.span,
+    nW: (c.nw - rW.lo) / rW.span,
+  });
+  const W = weights.ncfi + weights.cash + weights.nw || 1;
+  const scored = cells.map(norm).map((c) => ({
+    ...c,
+    U: (weights.ncfi * c.nN + weights.cash * c.nC + weights.nw * c.nW) / W,
+  }));
+
+  // 3) unconstrained optimum + top 3
+  const ranked = [...scored].sort((a, b) => b.U - a.U);
+  const best = ranked[0];
+  const top3 = ranked.slice(0, 3);
+
+  // 4) range-safe optimum (restock <= cap)
+  const safe = scored.filter((c) => c.r <= rMaxSafe).sort((a, b) => b.U - a.U);
+  const bestSafe = safe.length ? safe[0] : null;
+
+  return { scored, best, top3, bestSafe, dGrid, rGrid, ranges: { rN, rC, rW } };
+}
+
+
+/* ============================================================
    UI PRIMITIVES
    ============================================================ */
 function Slider({ label, value, min, max, step, onChange, suffix = "", help, accent = C.orange, fmtVal }) {
@@ -679,6 +729,22 @@ function DocTab() {
         It is an illustration for a representative ranch, not a whole-farm tax model. It does not re-run the full FARM Assistance machinery for off-anchor strategies, model individual-ranch debt structures, or price the agronomic cost of overgrazing the retained herd's pasture. Off-farm income and hunting support cash flow in every strategy, so the destock/restock choice is what moves the result on the margin. Actual outcomes vary by producer, management, and markets. This is decision-support, not financial advice.
       </DocSection>
 
+      <DocSection title="The optimizer (how it finds the &quot;best&quot; strategy)">
+        The Optimizer tab solves a <strong>multi-objective optimization by exhaustive grid search</strong>. The decision variables are destock % and restock %; every combination on the grid (231 strategies) is run through the same engine the dashboard uses. Because all feasible strategies are evaluated, the reported optimum is the global best for your settings — there is no solver, sampling, or approximation to second-guess.
+        <Formula>
+          maximize&nbsp;&nbsp;U(d, r) = w₁·Ñ(d,r) + w₂·C̃(d,r) + w₃·W̃(d,r)<br />
+          subject to&nbsp;restock r ≤ guardrail cap<br /><br />
+          where Ñ, C̃, W̃ are NCFI, ending cash, and net-worth growth,<br />
+          each min-max normalized to 0–1 across all strategies,<br />
+          and w₁, w₂, w₃ are the weights you set (Σw = 1).
+        </Formula>
+        The three goals disagree — cash profit favors a lighter restock, equity favors a heavier herd — so there is no single &quot;best&quot; without a value judgment. Sliding the weights traces the <strong>trade-off (Pareto) frontier</strong> between cash today and equity tomorrow. The <strong>range-safe optimum</strong> repeats the search after removing every strategy that restocks above your guardrail, pricing the drought-resilience cost the dollar figures alone ignore. The optimizer re-runs automatically whenever you change a price, an assumption, the weights, or the guardrail.
+      </DocSection>
+
+      <DocSection title="Limitations of the optimizer">
+        Three honest caveats for anyone presenting it. <strong>First</strong>, the optimum is only as good as the model beneath it: away from the nine published runs the figures are engine interpolation, so the optimizer finds the best strategy <em>within the hybrid model's representation</em>, not a fresh FARM Assistance result. <strong>Second</strong>, it responds strongly and correctly to the price and cost assumptions a producer is most likely to explore (cattle prices, feed, replacement cost), but to a few structural assumptions — herd size, calving rate — it responds only weakly, because those scale both the engine and its baseline reference and partly cancel in the sensitivity ratio; a genuinely different ranch (say 200 cows) really wants a new FARM Assistance run to re-anchor. <strong>Third</strong>, it optimizes the herd-size levers only at fixed timing, and it does not yet model price or weather uncertainty — it finds the best <em>average</em> strategy, not the most robust one under risk. Treat the result as a well-structured starting point for discussion with an Extension specialist, not a prescription.
+      </DocSection>
+
       <div style={{ background: C.paperWarm, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "14px 18px", fontSize: 12.5, color: "#7A6E68", lineHeight: 1.6 }}>
         <strong style={{ color: C.ink }}>Citation:</strong> Updated from <em>Economic Impact of Beef Cattle Best Management Practices in South Texas: Stocking Strategies During Drought</em> (FARM Assistance Focus 2011-6; Young, Dominguez, Paschal &amp; Klose), with 2026 assumptions and scenario runs from the Texas A&amp;M AgriLife FARM Assistance program.
       </div>
@@ -751,6 +817,136 @@ function TeamTab() {
   );
 }
 
+
+/* ============================================================
+   TAB — OPTIMIZER (multi-objective constrained search)
+   ============================================================ */
+function HeatCell({ c, best, safe, onPick }) {
+  // color by utility: maroon-to-gold scale
+  const u = c.U;
+  const bg = `rgba(80,0,0,${0.12 + 0.78 * u})`;
+  const isBest = c.d === best.d && c.r === best.r;
+  const isSafe = safe && c.d === safe.d && c.r === safe.r;
+  return (
+    <div onClick={() => onPick(c.d, c.r)} title={`Destock ${c.d}% / Restock ${c.r}%\nUtility ${u.toFixed(2)}\nNCFI $${Math.round(c.ncfi).toLocaleString()}`}
+      style={{ background: bg, aspectRatio: "1", borderRadius: 3, cursor: "pointer", position: "relative", border: isBest ? "2.5px solid #E8C9A0" : isSafe ? "2px solid #6B7A4F" : "1px solid #ffffff44", display: "grid", placeItems: "center" }}>
+      {isBest && <span style={{ fontSize: 11, color: "#fff" }}>★</span>}
+      {isSafe && !isBest && <span style={{ fontSize: 9, color: "#fff" }}>✓</span>}
+    </div>
+  );
+}
+function ResultCard({ title, accent, c, sub, onUse, current }) {
+  if (!c) return null;
+  return (
+    <div style={{ background: "#fff", border: `1px solid ${C.line}`, borderTop: `4px solid ${accent}`, borderRadius: 13, padding: "16px 18px" }}>
+      <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.05em", color: "#8A7D77" }}>{title}</div>
+      <div style={{ fontFamily: "'Bitter', serif", fontSize: 22, fontWeight: 800, color: accent, marginTop: 4 }}>Destock {c.d}% / Restock {c.r}%</div>
+      {sub && <div style={{ fontSize: 11.5, color: "#8A7D77", marginTop: 2 }}>{sub}</div>}
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 8, marginTop: 12 }}>
+        <div><div style={{ fontSize: 9.5, color: "#9A9285", textTransform: "uppercase" }}>NCFI/yr</div><div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 13, color: C.ink }}>{fmt(c.ncfi)}</div></div>
+        <div><div style={{ fontSize: 9.5, color: "#9A9285", textTransform: "uppercase" }}>End cash</div><div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 13, color: C.ink }}>{fmt(c.cash)}</div></div>
+        <div><div style={{ fontSize: 9.5, color: "#9A9285", textTransform: "uppercase" }}>Net worth</div><div style={{ fontFamily: "'IBM Plex Mono', monospace", fontWeight: 700, fontSize: 13, color: C.ink }}>{Math.round(c.nw)}%</div></div>
+      </div>
+      <button onClick={() => onUse(c.d, c.r)} style={{ marginTop: 13, width: "100%", background: current ? accent : "#fff", color: current ? "#fff" : accent, border: `1.5px solid ${accent}`, borderRadius: 9, padding: "8px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>{current ? "Loaded on dashboard" : "Load this on the dashboard →"}</button>
+    </div>
+  );
+}
+function OptimizerTab({ s, prices, cal, onApply }) {
+  const [w, setW] = useState({ ncfi: 50, cash: 25, nw: 25 });
+  const [rCap, setRCap] = useState(85);
+  const setWeight = (k) => (v) => setW((p) => ({ ...p, [k]: v }));
+  const result = useMemo(() => optimize(s, prices, cal, { ncfi: w.ncfi, cash: w.cash, nw: w.nw }, rCap), [s, prices, cal, w, rCap]);
+  const { best, top3, bestSafe, scored, dGrid, rGrid } = result;
+  const medal = ["1st", "2nd", "3rd"];
+
+  return (
+    <div style={{ paddingTop: 22 }}>
+      <h2 style={{ margin: "0 0 6px", fontFamily: "'Bitter', serif", fontSize: 22, color: C.ink }}>Optimal stocking strategy</h2>
+      <p style={{ margin: "0 0 18px", color: "#8A7D77", fontSize: 13.5, lineHeight: 1.6, maxWidth: 760 }}>
+        This searches every destock/restock combination on a grid and finds the one that best matches what you value. Because the "best" strategy depends on whether you weight cash profit, liquidity, or long-term equity, you set the weights — the optimizer walks that trade-off for you. It uses your current prices and assumptions from the other tabs.
+      </p>
+      <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.paperWarm, border: `1px solid ${C.line}`, borderLeft: `4px solid ${C.green}`, borderRadius: 10, padding: "10px 15px", marginBottom: 18, maxWidth: 760 }}>
+        <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, flexShrink: 0 }} />
+        <span style={{ fontSize: 12.5, color: "#5A4F4A", lineHeight: 1.5 }}>
+          <strong style={{ color: C.ink }}>Re-optimized live</strong> for your current inputs — steer <strong>${prices[0].steer.toFixed(2)}</strong>/lb, cull <strong>${prices[0].cull.toFixed(2)}</strong>/lb, bred cow <strong>${fmtNum(cal.bredCowPrice)}</strong>, feed <strong>${fmtNum(cal.hayPrice)}</strong>/${fmtNum(cal.cubePrice)} hay/supp, herd <strong>{cal.herd0}</strong> cows. Change anything on the Assumptions or Dashboard tabs and this re-runs automatically.
+        </span>
+      </div>
+
+      <div className="two-col" style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 18, alignItems: "start" }}>
+        {/* CONTROLS */}
+        <div style={{ position: "sticky", top: 20 }}>
+          <Panel title="What do you value?" subtitle="Set the weight on each goal. They're normalized, so only the balance matters." accent={C.orange}>
+            <Slider label="Cash profit (avg NCFI)" value={w.ncfi} min={0} max={100} step={5} suffix="%" accent={C.orange} onChange={setWeight("ncfi")} />
+            <Slider label="Liquidity (ending cash)" value={w.cash} min={0} max={100} step={5} suffix="%" accent={C.teal} onChange={setWeight("cash")} />
+            <Slider label="Long-term equity (net worth)" value={w.nw} min={0} max={100} step={5} suffix="%" accent={C.green} onChange={setWeight("nw")} />
+            <div style={{ fontSize: 11, color: "#8A7D77", marginTop: 2, paddingTop: 8, borderTop: `1px solid ${C.line}` }}>
+              Weights are relative — {w.ncfi}:{w.cash}:{w.nw} normalizes to {(w.ncfi / (w.ncfi + w.cash + w.nw + 0.0001) * 100).toFixed(0)}% / {(w.cash / (w.ncfi + w.cash + w.nw + 0.0001) * 100).toFixed(0)}% / {(w.nw / (w.ncfi + w.cash + w.nw + 0.0001) * 100).toFixed(0)}%.
+            </div>
+          </Panel>
+          <Panel title="Rangeland guardrail" subtitle="Cap the permanent (restock) herd to protect the range against the next drought." accent={C.green}>
+            <Slider label="Max restock allowed" value={rCap} min={50} max={100} step={5} suffix="%" accent={C.green} onChange={setRCap} help="The range-safe optimum won't restock above this. The 2011 study notes a lighter herd withstands future drought better — a cost the dollar figures don't price." />
+          </Panel>
+        </div>
+
+        {/* RESULTS */}
+        <div>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
+            <ResultCard title="Optimal (unconstrained)" accent={C.orange} c={best} sub="Best blend of your weighted goals" onUse={onApply} current={s.destockPct === best.d && s.restockPct === best.r} />
+            <ResultCard title={`Range-safe (restock ≤ ${rCap}%)`} accent={C.green} c={bestSafe} sub="Best strategy within the guardrail" onUse={onApply} current={bestSafe && s.destockPct === bestSafe.d && s.restockPct === bestSafe.r} />
+          </div>
+
+          <Panel title="Top three strategies" subtitle="Ranked by your weighted objective. Ties are common — nearby strategies often score within a hair." accent={C.coral}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {top3.map((c, i) => (
+                <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 13px", background: i === 0 ? C.orange + "10" : C.paperWarm, borderRadius: 10, border: `1px solid ${i === 0 ? C.orange + "44" : C.line}` }}>
+                  <span style={{ fontFamily: "'Bitter', serif", fontWeight: 800, fontSize: 13, color: i === 0 ? C.orange : "#8A7D77", minWidth: 26 }}>{medal[i]}</span>
+                  <span style={{ fontWeight: 700, fontSize: 13.5, color: C.ink, minWidth: 165 }}>Destock {c.d}% / Restock {c.r}%</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#6A5F58", flex: 1 }}>NCFI {fmt(c.ncfi)} · cash {fmt(c.cash)} · NW {Math.round(c.nw)}%</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, fontWeight: 700, color: C.orange, background: "#fff", padding: "2px 8px", borderRadius: 6, border: `1px solid ${C.line}` }}>U {c.U.toFixed(2)}</span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Objective surface" subtitle="Every strategy scored by your weighted goal — darker is better. ★ is the optimum, ✓ the range-safe pick. Click any cell to load it." accent={C.slate}>
+            <div style={{ display: "flex", gap: 10 }}>
+              <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
+                <div style={{ fontSize: 9, color: "#8A7D77", writingMode: "vertical-rl", transform: "rotate(180deg)", textAlign: "center", fontWeight: 700 }}>RESTOCK %</div>
+              </div>
+              <div style={{ flex: 1 }}>
+                <div style={{ display: "grid", gridTemplateColumns: `28px repeat(${dGrid.length}, 1fr)`, gap: 2, alignItems: "center" }}>
+                  {/* rows: each restock value (high to low) */}
+                  {[...rGrid].reverse().map((rv) => (
+                    <React.Fragment key={rv}>
+                      <div style={{ fontSize: 9, color: "#8A7D77", textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", paddingRight: 2 }}>{rv}</div>
+                      {dGrid.map((dv) => {
+                        const c = scored.find((x) => x.d === dv && x.r === rv);
+                        return <HeatCell key={dv + "-" + rv} c={c} best={best} safe={bestSafe} onPick={onApply} />;
+                      })}
+                    </React.Fragment>
+                  ))}
+                  {/* x-axis labels */}
+                  <div></div>
+                  {dGrid.map((dv) => <div key={dv} style={{ fontSize: 8, color: "#8A7D77", textAlign: "center", fontFamily: "'IBM Plex Mono', monospace", transform: dGrid.length > 12 ? "rotate(-60deg)" : "none" }}>{dv}</div>)}
+                </div>
+                <div style={{ textAlign: "center", fontSize: 9, color: "#8A7D77", fontWeight: 700, marginTop: 6 }}>DESTOCK %</div>
+              </div>
+            </div>
+          </Panel>
+
+          {/* METHOD NOTE */}
+          <div style={{ background: `linear-gradient(120deg, #500000, #6B1A1A)`, color: "#fff", borderRadius: 14, padding: "18px 22px" }}>
+            <h3 style={{ margin: "0 0 8px", fontFamily: "'Bitter', serif", fontSize: 16, color: "#E8C9A0" }}>How the optimization works</h3>
+            <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.65, color: "#E6E1D8" }}>
+              This is a multi-objective optimization solved by exhaustive grid search over the decision variables — destock % and restock %. Each candidate is run through the same engine the dashboard uses. The three objectives (NCFI, ending cash, net-worth growth) are normalized to a common 0–1 scale, then combined with your weights into a single utility. Because every feasible strategy is evaluated, the reported optimum is the global best for your weights — no solver, no approximation. Tightening the rangeland guardrail removes strategies that restock above the cap, giving the best <em>range-safe</em> choice. Slide the weights to trace the trade-off frontier between cash today and equity tomorrow.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [s, setS] = useState({ ...DEFAULTS });
   const set = (k) => (v) => setS((st) => ({ ...st, [k]: v }));
@@ -788,7 +984,7 @@ export default function App() {
             </div>
           </div>
           <nav style={{ display: "flex", gap: 4, marginTop: 18, flexWrap: "wrap" }}>
-            {["Dashboard", "Assumptions", "Financial results", "Documentation", "About"].map((t, i) => (
+            {["Dashboard", "Assumptions", "Financial results", "Optimizer", "Documentation", "About"].map((t, i) => (
               <button key={t} onClick={() => setTab(i)} style={{ border: "none", cursor: "pointer", fontSize: 13.5, fontWeight: 700, padding: "11px 18px", borderRadius: "10px 10px 0 0", background: tab === i ? C.paper : "transparent", color: tab === i ? C.ink : "#E3CFCF", fontFamily: "'Source Sans 3', sans-serif" }}>{t}</button>
             ))}
           </nav>
@@ -798,8 +994,9 @@ export default function App() {
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "0 24px 70px" }}>
         {tab === 1 && <AssumptionsTab cal={cal} setCal={setCal} resetCal={() => setCal({ ...CAL })} />}
         {tab === 2 && <FinancialsTab m={m} s={sEff} years={years} cal={cal} />}
-        {tab === 3 && <DocTab />}
-        {tab === 4 && <TeamTab />}
+        {tab === 3 && <OptimizerTab s={sEff} prices={prices} cal={cal} onApply={(d, r) => { setS((st) => ({ ...st, destockPct: d, restockPct: r })); setTab(0); }} />}
+        {tab === 4 && <DocTab />}
+        {tab === 5 && <TeamTab />}
         {tab === 0 && (<>
         {/* STICKY RESULTS */}
         <div style={{ position: "sticky", top: 0, zIndex: 30, background: `linear-gradient(${C.paper}, ${C.paper}E6)`, backdropFilter: "blur(6px)", paddingTop: 16, paddingBottom: 13, marginBottom: 8, borderBottom: `1px solid ${C.line}` }}>
@@ -882,4 +1079,4 @@ export default function App() {
   );
 }
 
- 
+
