@@ -686,7 +686,7 @@ function DocTab() {
         </table>
       </DocSection>
 
-      <DocSection title="How the model is built (the honest part)">
+      <DocSection title="How the model is built">
         The tool is a <strong>hybrid</strong>, by design. The headline figures — average NCFI, ending cash, and net-worth growth — are <strong>anchored to the nine published runs</strong>. When your destock/restock setting matches one of the nine, you see that exact published value. Between the nine, the tool interpolates (inverse-distance weighting). A transparent year-by-year cash engine then drives two things the published averages can't: the <strong>annual trajectory</strong> (the shape of the line) and the <strong>sensitivity to your price and assumption edits</strong>.
         <Formula>
           result = published_anchor(destock%, restock%)<br />
