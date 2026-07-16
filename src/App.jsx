@@ -39,7 +39,7 @@ const CAL = {
   hayPrice: 250, cubePrice: 450, hayTonCow: 3.376, cubeTonCow: 1.46,
   maintFeedCow: 317, prodCostCow: 172,
   hunting: 8000, offFarm: 100000, familyLiving: 57000, cashStart: 10000,
-  realEstate0: 2060000, machinery0: 127000, inflation: 0.027,
+  realEstate0: 2060000, machinery0: 127000, inflation: 0.027, costInflation: 0,
   baselineTrend: -3.0,
 };
 
@@ -81,17 +81,38 @@ function idw(d, r, key) {
 }
 
 /* default editable price path: Year-1 = DBG 2026, evolving at a trend */
-function buildPrices(horizon, trendPct, prev, cal = CAL) {
+function buildPrices(horizon, trendPct, prev, cal = CAL, feedTrendPct = 0) {
   const arr = [];
   for (let y = 0; y < horizon; y++) {
     if (prev && prev[y] && prev[y].override) { arr.push(prev[y]); continue; }
     const f = Math.pow(1 + trendPct / 100, y);
+    const g = Math.pow(1 + feedTrendPct / 100, y);
     arr.push({
       steer: +(cal.steerPrice * f).toFixed(2),
       heifer: +(cal.heiferPrice * f).toFixed(2),
       cull: +(cal.cullCowPrice * f).toFixed(2),
-      hay: Math.round(cal.hayPrice),
-      cube: Math.round(cal.cubePrice),
+      hay: Math.round(cal.hayPrice * g),
+      cube: Math.round(cal.cubePrice * g),
+      override: false,
+    });
+  }
+  return arr;
+}
+
+/* year-by-year assumption path: base values evolve (costs by cost inflation),
+   any year can be overridden on the Assumptions tab */
+function buildAssump(horizon, cal, prev) {
+  const arr = [];
+  for (let y = 0; y < horizon; y++) {
+    if (prev && prev[y] && prev[y].override) { arr.push(prev[y]); continue; }
+    const cInf = Math.pow(1 + (cal.costInflation || 0) / 100, y);
+    arr.push({
+      calvingRate: cal.calvingRate,
+      cullRate: cal.cullRate,
+      maintFeed: Math.round(cal.maintFeedCow * cInf),
+      prodCost: Math.round(cal.prodCostCow * cInf),
+      offFarm: cal.offFarm,
+      familyLiving: cal.familyLiving,
       override: false,
     });
   }
@@ -107,9 +128,34 @@ const DEFAULTS = {
   herd0: 50, calvingRate: 86,
 };
 
+/* Published stocking paths from the 2026 scenario runs (years 1-10, annualized;
+   quarterly sell-down patterns like 25/12/0/0 are averaged within the year).
+   Used when the strategy matches a published run at the default timing. */
+const PUB_PATHS = {
+  "0/100":   [50,50,50,50,50,50,50,50,50,50],
+  "25/100":  [37,43,50,50,50,50,50,50,50,50],
+  "50/100":  [25,31,50,50,50,50,50,50,50,50],
+  "75/100":  [15,22,50,50,50,50,50,50,50,50],
+  "100/100": [9,9,50,50,50,50,50,50,50,50],
+  "25/75":   [37,37,37,37,37,37,37,37,37,37],
+  "50/75":   [25,31,37,37,37,37,37,37,37,37],
+  "75/75":   [12,25,37,37,37,37,37,37,37,37],
+  "100/75":  [9,9,37,37,37,37,37,37,37,37],
+};
+
 /* herd path: destock in any year, restock by any later year */
 function herdPath(s) {
   const n = s.horizon, base = s.herd0;
+  // snap to the published stocking pattern when the strategy matches a run at default timing
+  if (s.destockYear === 1 && s.restockYear === 3) {
+    const pub = PUB_PATHS[s.destockPct + "/" + s.restockPct];
+    if (pub) {
+      const scale = base / 50;
+      const path = [];
+      for (let y = 0; y < n; y++) path.push(Math.round(pub[Math.min(y, pub.length - 1)] * scale));
+      return path;
+    }
+  }
   const dY = Math.min(Math.max(s.destockYear, 1), n);
   const rY = Math.min(Math.max(s.restockYear, dY), n);
   const remain = base * (1 - s.destockPct / 100);
@@ -127,22 +173,24 @@ function herdPath(s) {
 }
 
 /* transparent year-by-year engine — returns annual NCFI & components */
-function engineYears(s, prices, cal = CAL) {
+function engineYears(s, prices, cal = CAL, aPath = null) {
   const n = s.horizon, path = herdPath(s);
   const out = [];
   let prevHead = s.herd0;
   for (let y = 0; y < n; y++) {
     const p = prices[y], head = path[y];
     const recovering = y < (s.feedRecoverYear - 1);
-    const calves = head * s.calvingRate / 100;
+    const A = aPath ? aPath[y] : null;
+    const calves = head * (A ? A.calvingRate : s.calvingRate) / 100;
     const steers = calves * cal.steerShare, heifers = calves * (1 - cal.steerShare);
     const calfRev = steers * cal.steerWt * p.steer + heifers * cal.heiferWt * p.heifer;
-    const annualCull = head * cal.cullRate / 100;
+    const annualCull = head * (A ? A.cullRate : cal.cullRate) / 100;
     const sellDown = Math.max(prevHead - head, 0);
     const cullRev = (annualCull + sellDown) * cal.cullCowWt * p.cull;
-    const feedPerCow = recovering ? (cal.hayTonCow * p.hay + cal.cubeTonCow * p.cube) : cal.maintFeedCow;
+    const cInf = Math.pow(1 + (cal.costInflation || 0) / 100, y);
+    const feedPerCow = recovering ? (cal.hayTonCow * p.hay + cal.cubeTonCow * p.cube) : (A ? A.maintFeed : cal.maintFeedCow * cInf);
     const feedCost = head * feedPerCow;
-    const prodCost = head * cal.prodCostCow;
+    const prodCost = head * (A ? A.prodCost : cal.prodCostCow * cInf);
     const bought = Math.max(head - prevHead, 0) + annualCull;
     const replCost = bought * cal.bredCowPrice;
     const ncfi = calfRev + cullRev - feedCost - prodCost - replCost;
@@ -154,9 +202,10 @@ function engineYears(s, prices, cal = CAL) {
 const avgNcfiOf = (yrs) => yrs.reduce((a, b) => a + b.ncfi, 0) / yrs.length;
 
 /* hybrid model: anchor to published runs, scale by engine price-sensitivity */
-function model(s, prices, cal = CAL) {
-  const yrs = engineYears(s, prices, cal);
-  const baseYrs = engineYears(s, buildPrices(s.horizon, cal.baselineTrend, null, cal), cal);
+function model(s, prices, cal = CAL, aPath = null) {
+  const yrs = engineYears(s, prices, cal, aPath);
+  const calBase = { ...cal, costInflation: 0 };  // published runs assumed no extra cost drift
+  const baseYrs = engineYears(s, buildPrices(s.horizon, cal.baselineTrend, null, calBase), calBase);
   const engNow = avgNcfiOf(yrs), engBase = avgNcfiOf(baseYrs);
   const sens = engBase !== 0 ? engNow / engBase : 1;
 
@@ -187,9 +236,11 @@ function model(s, prices, cal = CAL) {
 
   // ending cash trajectory
   let cash = cal.cashStart; const cashTraj = [];
-  ncfiTraj.forEach((v) => {
-    const taxable = Math.max(v + cal.offFarm - cal.familyLiving, 0);
-    cash += v + cal.offFarm + cal.hunting - cal.familyLiving - taxable * 0.18;
+  ncfiTraj.forEach((v, i) => {
+    const off = aPath && aPath[i] ? aPath[i].offFarm : cal.offFarm;
+    const fam = aPath && aPath[i] ? aPath[i].familyLiving : cal.familyLiving;
+    const taxable = Math.max(v + off - fam, 0);
+    cash += v + off + cal.hunting - fam - taxable * 0.18;
     cashTraj.push(cash);
   });
   // rescale cash trajectory endpoint to the anchored endCash
@@ -217,29 +268,33 @@ function bestRun() { return RUNS.reduce((b, r) => (r.ncfi > b.ncfi ? r : b)); }
    Constraint: optional stocking-rate cap (range-safe variant)
    Method: exhaustive grid -> provably global optimum, fully transparent
    ============================================================ */
-function optimize(s, prices, cal, weights, rMaxSafe) {
+function optimize(s, prices, cal, weights, rMaxSafe, aPath = null, stress = false, band = 15) {
   const dGrid = [], rGrid = [];
   for (let d = 0; d <= 100; d += 5) dGrid.push(d);
   for (let r = 50; r <= 100; r += 5) rGrid.push(r);
+  const lowPrices = prices.map((p) => ({ ...p, steer: p.steer * (1 - band / 100), heifer: p.heifer * (1 - band / 100), cull: p.cull * (1 - band / 100) }));
 
-  // 1) evaluate the engine across the whole grid
+  // 1) evaluate the engine across the whole grid, under base and adverse prices
   const cells = [];
   for (const d of dGrid) for (const r of rGrid) {
-    const m = model({ ...s, destockPct: d, restockPct: r }, prices, cal);
-    cells.push({ d, r, ncfi: m.avgNcfi, cash: m.endCash, nw: m.nwGrowth });
+    const m = model({ ...s, destockPct: d, restockPct: r }, prices, cal, aPath);
+    const mL = model({ ...s, destockPct: d, restockPct: r }, lowPrices, cal, aPath);
+    cells.push({ d, r, ncfi: m.avgNcfi, cash: m.endCash, nw: m.nwGrowth, ncfiLow: mL.avgNcfi, cashLow: mL.endCash, nwLow: mL.nwGrowth });
   }
   // 2) min-max normalize each objective across the feasible set
+  //    (under the adverse scenario when stress ranking is on)
+  const kN = stress ? "ncfiLow" : "ncfi", kC = stress ? "cashLow" : "cash", kW = stress ? "nwLow" : "nw";
   const range = (key) => {
     const vals = cells.map((c) => c[key]);
     const lo = Math.min(...vals), hi = Math.max(...vals);
     return { lo, hi, span: hi - lo || 1 };
   };
-  const rN = range("ncfi"), rC = range("cash"), rW = range("nw");
+  const rN = range(kN), rC = range(kC), rW = range(kW);
   const norm = (c) => ({
     ...c,
-    nN: (c.ncfi - rN.lo) / rN.span,
-    nC: (c.cash - rC.lo) / rC.span,
-    nW: (c.nw - rW.lo) / rW.span,
+    nN: (c[kN] - rN.lo) / rN.span,
+    nC: (c[kC] - rC.lo) / rC.span,
+    nW: (c[kW] - rW.lo) / rW.span,
   });
   const W = weights.ncfi + weights.cash + weights.nw || 1;
   const scored = cells.map(norm).map((c) => ({
@@ -305,9 +360,9 @@ function Panel({ title, subtitle, accent, children, right }) {
 }
 
 /* dual-line chart: NCFI and NFI over the years, with a zero line */
-function DualChart({ years, ncfi, nfi, height = 250 }) {
+function DualChart({ years, ncfi, nfi, band, pinned, height = 250 }) {
   const W = 640, H = height, padL = 54, padR = 16, padT = 18, padB = 30;
-  const all = [...ncfi, ...nfi];
+  const all = [...ncfi, ...nfi, ...(band ? [...band.lo, ...band.hi] : []), ...(pinned || [])];
   const min = Math.min(...all, 0), max = Math.max(...all, 0), range = max - min || 1;
   const x = (i) => padL + (i / Math.max(years.length - 1, 1)) * (W - padL - padR);
   const y = (v) => padT + (1 - (v - min) / range) * (H - padT - padB);
@@ -316,6 +371,8 @@ function DualChart({ years, ncfi, nfi, height = 250 }) {
       {[0,1,2,3,4,5].map((i) => { const v = min + (range*i)/5; return (<g key={i}><line x1={padL} x2={W-padR} y1={y(v)} y2={y(v)} stroke={C.line} strokeWidth={1}/><text x={padL-7} y={y(v)+3} textAnchor="end" fontSize={9.5} fill="#9A9285" fontFamily="'IBM Plex Mono', monospace">{Math.round(v/1000)}k</text></g>); })}
       {y(0)>padT && y(0)<H-padB && <line x1={padL} x2={W-padR} y1={y(0)} y2={y(0)} stroke="#B9AE9C" strokeWidth={1.5} strokeDasharray="4 3"/>}
       {years.map((l,i)=><text key={i} x={x(i)} y={H-9} textAnchor="middle" fontSize={9} fill="#9A9285" fontFamily="'IBM Plex Mono', monospace">{l}</text>)}
+      {band && <polygon fill={C.orange} fillOpacity="0.12" stroke="none" points={[...band.hi.map((v,i)=>`${x(i)},${y(v)}`), ...band.lo.map((v,i)=>`${x(band.lo.length-1-i)},${y(band.lo[band.lo.length-1-i])}`)].join(" ")}/>}
+      {pinned && <polyline fill="none" stroke="#9A9285" strokeWidth={2} strokeDasharray="3 4" strokeLinejoin="round" points={pinned.map((v,i)=>`${x(i)},${y(v)}`).join(" ")}/>}
       <polyline fill="none" stroke={C.orange} strokeWidth={2.8} strokeLinejoin="round" strokeLinecap="round" points={ncfi.map((v,i)=>`${x(i)},${y(v)}`).join(" ")}/>
       <polyline fill="none" stroke={C.indigo} strokeWidth={2.2} strokeDasharray="5 4" strokeLinejoin="round" strokeLinecap="round" points={nfi.map((v,i)=>`${x(i)},${y(v)}`).join(" ")}/>
       {ncfi.map((v,i)=><circle key={"a"+i} cx={x(i)} cy={y(v)} r={2.6} fill={C.orange}/>)}
@@ -345,14 +402,15 @@ function HerdStrip({ years, path, herd0 }) {
 }
 
 /* editable year-by-year price table */
-function PriceTable({ prices, setPrices, years, trend, setTrend, cal = CAL }) {
+function PriceTable({ prices, setPrices, years, trend, setTrend, feedTrend, setFeedTrend, cal = CAL }) {
   const upd = (yi, field, val) => {
     const next = prices.map((p, i) => i === yi ? { ...p, [field]: val, override: true } : p);
     setPrices(next);
   };
   const resetYear = (yi) => {
     const f = Math.pow(1 + trend / 100, yi);
-    const np = { steer: +(cal.steerPrice*f).toFixed(2), heifer: +(cal.heiferPrice*f).toFixed(2), cull: +(cal.cullCowPrice*f).toFixed(2), hay: Math.round(cal.hayPrice), cube: Math.round(cal.cubePrice), override: false };
+    const g = Math.pow(1 + (feedTrend || 0) / 100, yi);
+    const np = { steer: +(cal.steerPrice*f).toFixed(2), heifer: +(cal.heiferPrice*f).toFixed(2), cull: +(cal.cullCowPrice*f).toFixed(2), hay: Math.round(cal.hayPrice*g), cube: Math.round(cal.cubePrice*g), override: false };
     setPrices(prices.map((p, i) => i === yi ? np : p));
   };
   const th = { padding: "7px 7px", fontSize: 10, fontWeight: 700, color: "#fff", textAlign: "center", fontFamily: "'Source Sans 3',sans-serif" };
@@ -367,7 +425,10 @@ function PriceTable({ prices, setPrices, years, trend, setTrend, cal = CAL }) {
     <div>
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <Slider label="Price trend (applied from Year 1)" value={trend} min={-8} max={6} step={0.5} accent={C.coral} onChange={setTrend} fmtVal={(v) => (v > 0 ? "+" : "") + v.toFixed(1) + "%/yr"} help="Year 1 holds the 2026 prices; later years evolve at this rate. Edit any cell to override a single year." />
+          <Slider label="Cattle price trend (from Year 1)" value={trend} min={-8} max={8} step={0.5} accent={C.coral} onChange={setTrend} fmtVal={(v) => (v > 0 ? "+" : "") + v.toFixed(1) + "%/yr"} help="Applies to steer, heifer, and cull prices. Year 1 holds the 2026 values; later years evolve at this rate. Edit any cell to override a single year." />
+        </div>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <Slider label="Feed price trend (from Year 1)" value={feedTrend} min={-8} max={8} step={0.5} accent={C.green} onChange={setFeedTrend} fmtVal={(v) => (v > 0 ? "+" : "") + v.toFixed(1) + "%/yr"} help="Applies to hay and supplement. Cattle and feed prices move separately because they rarely move together, especially in drought." />
         </div>
       </div>
       <div style={{ overflowX: "auto", border: `1px solid ${C.line}`, borderRadius: 11 }}>
@@ -463,7 +524,59 @@ function AssumeCard({ title, accent, children }) {
     </div>
   );
 }
-function AssumptionsTab({ cal, setCal, resetCal }) {
+function YearOverrides({ assump, setAssump, years, cal }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section style={{ background: "#fff", border: `1px solid ${C.line}`, borderRadius: 14, padding: "18px 20px", boxShadow: "0 2px 8px rgba(63,63,63,0.04)" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10, marginBottom: open ? 14 : 0 }}>
+        <div>
+          <h3 style={{ margin: 0, fontFamily: "'Bitter', serif", fontSize: 17, color: C.ink, display: "flex", alignItems: "center", gap: 9 }}>
+            <span style={{ width: 8, height: 18, borderRadius: 3, background: C.indigo }} />Year-by-year overrides
+          </h3>
+          <p style={{ margin: "4px 0 0 17px", color: "#8A8276", fontSize: 12.5, lineHeight: 1.45 }}>Set any of these six assumptions for a specific year: calving and cull rates, maintenance feed, production cost, off-farm income, and family living. Costs start from the base values and grow at the cost-inflation rate; edited cells are flagged and can be reset.</p>
+        </div>
+        <button onClick={() => setOpen(!open)} style={{ background: open ? C.indigo : "#fff", color: open ? "#fff" : C.indigo, border: `1.4px solid ${C.indigo}`, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer", flexShrink: 0 }}>{open ? "Hide" : "Edit by year"}</button>
+      </div>
+      {open && <AssumpTable assump={assump} setAssump={setAssump} years={years} cal={cal} />}
+    </section>
+  );
+}
+/* year-by-year assumption override table (mirrors the price-path table) */
+function AssumpTable({ assump, setAssump, years, cal }) {
+  const upd = (yi, field, val) => setAssump(assump.map((a, i) => i === yi ? { ...a, [field]: val, override: true } : a));
+  const resetYear = (yi) => {
+    const cInf = Math.pow(1 + (cal.costInflation || 0) / 100, yi);
+    setAssump(assump.map((a, i) => i === yi ? { calvingRate: cal.calvingRate, cullRate: cal.cullRate, maintFeed: Math.round(cal.maintFeedCow * cInf), prodCost: Math.round(cal.prodCostCow * cInf), offFarm: cal.offFarm, familyLiving: cal.familyLiving, override: false } : a));
+  };
+  const th = { padding: "7px 7px", fontSize: 10, fontWeight: 700, color: "#fff", textAlign: "center", fontFamily: "'Source Sans 3',sans-serif" };
+  const cell = (yi, field, step, wpx) => (
+    <td style={{ padding: "3px 4px", textAlign: "center" }}>
+      <input type="number" value={assump[yi][field]} step={step}
+        onChange={(e) => upd(yi, field, parseFloat(e.target.value) || 0)}
+        style={{ width: wpx, border: `1px solid ${assump[yi].override ? C.orange : C.line}`, borderRadius: 6, padding: "5px 4px", fontSize: 11.5, fontFamily: "'IBM Plex Mono',monospace", textAlign: "center", color: C.ink, background: assump[yi].override ? C.orange + "0E" : "#fff" }} />
+    </td>
+  );
+  return (
+    <div style={{ overflowX: "auto", border: `1px solid ${C.line}`, borderRadius: 11 }}>
+      <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 720 }}>
+        <thead><tr style={{ background: C.slate }}>
+          <th style={{ ...th, textAlign: "left", paddingLeft: 12 }}>Year</th>
+          <th style={th}>Calving %</th><th style={th}>Cull %</th><th style={th}>Maint feed $/cow</th><th style={th}>Prod cost $/cow</th><th style={th}>Off-farm $</th><th style={th}>Family living $</th><th style={th}></th>
+        </tr></thead>
+        <tbody>
+          {assump.map((a, yi) => (
+            <tr key={yi} style={{ background: yi % 2 ? C.paperWarm : "#fff" }}>
+              <td style={{ padding: "3px 12px", fontSize: 12, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: C.ink }}>{years[yi]}{a.override && <span style={{ color: C.orange, fontSize: 9, marginLeft: 4 }}>{"\u270e"}</span>}</td>
+              {cell(yi, "calvingRate", 1, 52)}{cell(yi, "cullRate", 0.5, 52)}{cell(yi, "maintFeed", 5, 62)}{cell(yi, "prodCost", 5, 62)}{cell(yi, "offFarm", 1000, 78)}{cell(yi, "familyLiving", 1000, 78)}
+              <td style={{ padding: "3px 6px", textAlign: "center" }}>{a.override && <button onClick={() => resetYear(yi)} title="reset this year" style={{ background: "none", border: "none", color: C.coral, cursor: "pointer", fontSize: 12 }}>{"\u21ba"}</button>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+function AssumptionsTab({ cal, setCal, resetCal, assump, setAssump, years }) {
   const f = (k) => (v) => setCal((c) => ({ ...c, [k]: v }));
   return (
     <div style={{ paddingTop: 22 }}>
@@ -471,7 +584,7 @@ function AssumptionsTab({ cal, setCal, resetCal }) {
         <div>
           <h2 style={{ margin: 0, fontFamily: "'Bitter', serif", fontSize: 21, color: C.ink }}>Model assumptions</h2>
           <p style={{ margin: "4px 0 0", color: "#8A8276", fontSize: 13, maxWidth: 680, lineHeight: 1.5 }}>
-            These are the per-cow and whole-ranch values behind the dashboard, taken from the FARM Assistance input and base-run files. They feed the year-by-year engine. Edit any of them and the dashboard recomputes — the destock/restock timing and prices live on the main tab.
+            These are the per-cow and whole-ranch values behind the dashboard, taken from the FARM Assistance input and base-run files. They feed the year-by-year engine. Edit any of them and the dashboard recomputes; the destock/restock timing and prices live on the main tab.
           </p>
         </div>
         <button onClick={resetCal} style={{ background: "#fff", border: `1.5px solid ${C.coral}`, color: C.coral, fontWeight: 700, padding: "9px 16px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{"↺"} Reset assumptions</button>
@@ -511,6 +624,7 @@ function AssumptionsTab({ cal, setCal, resetCal }) {
           <NumField label="Supplement at full feed" value={cal.cubeTonCow} onChange={f("cubeTonCow")} step={0.05} suffix="ton/cow/yr" />
           <NumField label="Maintenance feed (recovered)" value={cal.maintFeedCow} onChange={f("maintFeedCow")} step={10} prefix="$" suffix="/cow/yr" />
           <NumField label="Other production cost" value={cal.prodCostCow} onChange={f("prodCostCow")} step={5} prefix="$" suffix="/cow/yr" help="Vet, salt/mineral, marketing." />
+          <NumField label="Cost inflation" value={cal.costInflation} onChange={f("costInflation")} step={0.5} suffix="%/yr" help="Escalates maintenance feed and production cost year by year. 0% matches the published runs." />
         </AssumeCard>
 
         <AssumeCard title="Whole-ranch & financial" accent={C.slate}>
@@ -523,8 +637,11 @@ function AssumptionsTab({ cal, setCal, resetCal }) {
         </AssumeCard>
       </div>
 
+      <div style={{ marginTop: 18 }}>
+        <YearOverrides assump={assump} setAssump={setAssump} years={years} cal={cal} />
+      </div>
       <div style={{ marginTop: 18, padding: "14px 18px", background: C.paperWarm, borderRadius: 13, border: `1px dashed ${C.line}`, fontSize: 12.5, color: "#7A7264", lineHeight: 1.6 }}>
-        <strong style={{ color: C.ink }}>Note:</strong> the headline NCFI, ending cash, and net-worth figures on the dashboard are anchored to the nine published 2026 FARM Assistance runs and scaled by these assumptions. Large departures from the baseline values move the results away from the validated runs — useful for exploring "what if," but the closer you stay to the defaults, the closer the figures track the official model output.
+        <strong style={{ color: C.ink }}>Note:</strong> the headline NCFI, ending cash, and net-worth figures on the dashboard are anchored to the nine published 2026 FARM Assistance runs and scaled by these assumptions. Large departures from the baseline values move the results away from the validated runs. That is useful for exploring "what if," but the closer you stay to the defaults, the closer the figures track the official model output.
       </div>
     </div>
   );
@@ -569,7 +686,7 @@ function FinTable({ title, accent, years, rows }) {
     </div>
   );
 }
-function FinancialsTab({ m, s, years, cal }) {
+function FinancialsTab({ m, s, years, cal, assump }) {
   const Y = m.yrs;
   const income = [
     { label: "Calf receipts", vals: Y.map((y) => y.calfRev) },
@@ -584,9 +701,9 @@ function FinancialsTab({ m, s, years, cal }) {
   ];
   const cash = [
     { label: "Net cash farm income", vals: Y.map((y) => y.ncfi) },
-    { label: "Off-farm income", vals: Y.map(() => cal.offFarm) },
+    { label: "Off-farm income", vals: Y.map((_, i) => (assump && assump[i] ? assump[i].offFarm : cal.offFarm)) },
     { label: "Hunting income", vals: Y.map(() => cal.hunting) },
-    { label: "Family withdrawals", vals: Y.map(() => -cal.familyLiving) },
+    { label: "Family withdrawals", vals: Y.map((_, i) => -(assump && assump[i] ? assump[i].familyLiving : cal.familyLiving)) },
     { label: "Ending cash reserve", vals: Y.map((y) => y.cash), bold: true },
   ];
   const head = m.path;
@@ -622,7 +739,7 @@ function FinancialsTab({ m, s, years, cal }) {
   return (
     <div style={{ paddingTop: 22 }}>
       <div style={{ background: C.paperWarm, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "12px 16px", marginBottom: 20, fontSize: 12.5, color: "#7A7264", lineHeight: 1.5 }}>
-        Year-by-year statements for your current strategy — <strong style={{ color: C.ink }}>Destock {s.destockPct}% in Yr {s.destockYear}, restock to {s.restockPct}% by Yr {s.restockYear}</strong>. These flow from the engine and update with every change on the dashboard and Assumptions tabs. The early years carry the heavy feeding bill; watch the ending-cash row for the survival picture, not just the averages.
+        Year-by-year statements for your current strategy: <strong style={{ color: C.ink }}>Destock {s.destockPct}% in Yr {s.destockYear}, restock to {s.restockPct}% by Yr {s.restockYear}</strong>. These flow from the engine and update with every change on the dashboard and Assumptions tabs. The early years carry the heavy feeding bill; watch the ending-cash row for the survival picture, not just the averages.
       </div>
       <FinTable title="Income Statement" accent={C.orange} years={years} rows={income} />
       <FinTable title="Cash Flow" accent={C.teal} years={years} rows={cash} />
@@ -667,7 +784,7 @@ function DocTab() {
     <div style={{ paddingTop: 22, maxWidth: 820 }}>
       <h2 style={{ margin: "0 0 6px", fontFamily: "'Bitter', serif", fontSize: 22, color: C.ink }}>How this tool works</h2>
       <p style={{ margin: "0 0 22px", color: "#8A7D77", fontSize: 13.5, lineHeight: 1.55 }}>
-        A reference for the specialist presenting the tool: where the numbers come from, how the model is built, and what each figure means. The aim is a transparent, defensible illustration of the destocking/restocking decision — not a black box.
+        A reference for the specialist/agent presenting the tool: where the numbers come from, how the model is built, and what each figure means. The aim is a transparent, defensible illustration of the destocking/restocking decision.
       </p>
 
       <DocSection title="What decision this illustrates">
@@ -678,22 +795,22 @@ function DocTab() {
         Three FARM Assistance sources, all from the Texas A&amp;M AgriLife strategic planning model:
         <table style={{ borderCollapse: "collapse", width: "100%", margin: "10px 0", border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
           <tbody>
-            <DefRow term="Assumptions" def="The 2026 FARM Assistance input file: herd size, calving rate, weights, cattle prices, feed rations and prices, replacement and sire costs, production costs, and whole-ranch items (off-farm income, hunting, family living). These populate the Assumptions tab." />
-            <DefRow term="Herd inventory" def="The year-by-year cow-herd inventory, confirming the feeding pattern — full feed in the early drought years, dropping to maintenance as forage recovers." />
+            <DefRow term="Assumptions" def="The 2026 FARM Assistance input file: herd size, calving rate, weights, cattle prices, feed rations and prices, replacement and sire costs, production costs, and whole-ranch items (off-farm income, hunting, family living). These populate the Assumptions tab, where six of them (calving rate, cull rate, maintenance feed, production cost, off-farm income, and family living) can also be overridden year by year." />
+            <DefRow term="Herd inventory" def="The year-by-year cow-herd inventory, confirming the feeding pattern: full feed in the early drought years, dropping to maintenance as forage recovers." />
             <DefRow term="Base-run statements" def="The 10-year income statement, cash flow, and balance sheet for the base scenario, used to calibrate the engine's per-cow economics." />
             <DefRow term="Scenario results" def="The nine published destock/restock runs (10-year averages of net cash farm income, ending cash, and net-worth growth). These are the validation anchors." />
           </tbody>
         </table>
       </DocSection>
 
-      <DocSection title="How the model is built">
-        The tool is a <strong>hybrid</strong>, by design. The headline figures — average NCFI, ending cash, and net-worth growth — are <strong>anchored to the nine published runs</strong>. When your destock/restock setting matches one of the nine, you see that exact published value. Between the nine, the tool interpolates (inverse-distance weighting). A transparent year-by-year cash engine then drives two things the published averages can't: the <strong>annual trajectory</strong> (the shape of the line) and the <strong>sensitivity to your price and assumption edits</strong>.
+      <DocSection title="How the model is built (the honest part)">
+        The tool is a <strong>hybrid</strong>, by design. The headline figures (average NCFI, ending cash, and net-worth growth) are <strong>anchored to the nine published runs</strong>. When your destock/restock setting matches one of the nine, you see that exact published value. Between the nine, the tool interpolates (inverse-distance weighting). A transparent year-by-year cash engine then drives two things the published averages can't: the <strong>annual trajectory</strong> (the shape of the line) and the <strong>sensitivity to your price and assumption edits</strong>.
         <Formula>
           result = published_anchor(destock%, restock%)<br />
           &nbsp;&nbsp;&nbsp;&nbsp;&times; engine(your prices) / engine(baseline prices)<br />
           &nbsp;&nbsp;&nbsp;&nbsp;&times; timing_factor(destock year, restock year)
         </Formula>
-        This keeps the presented numbers tied to real model output while still letting the audience explore "what if calf prices fall 5%/year?" The further you move from the baseline assumptions, the more the result is engine-driven rather than a published value — useful for exploration, but worth stating when you present.
+        This keeps the presented numbers tied to real model output while still letting the audience explore "what if calf prices fall 5%/year?" The further you move from the baseline assumptions, the more the result is engine-driven rather than a published value; that is useful for exploration, but worth stating when you present.
       </DocSection>
 
       <DocSection title="The year-by-year engine">
@@ -713,24 +830,24 @@ function DocTab() {
         <table style={{ borderCollapse: "collapse", width: "100%", margin: "4px 0", border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
           <tbody>
             <DefRow term="Net Cash Farm Income (NCFI)" def="Cash receipts minus cash costs, including the purchase and sale of breeding livestock, but excluding non-cash items like depreciation. The clearest measure of the cash a strategy generates." />
-            <DefRow term="Net Farm Income (NFI)" def="NCFI minus depreciation on purchased breeding stock. It runs below NCFI in the recovery years because newly bought cows carry depreciation — the pattern the 2011 study highlights, where the held-herd strategies look better on NFI mid-period." />
+            <DefRow term="Net Farm Income (NFI)" def="NCFI minus depreciation on purchased breeding stock. It runs below NCFI in the recovery years because newly bought cows carry depreciation, the pattern the 2011 study highlights, where the held-herd strategies look better on NFI mid-period." />
             <DefRow term="Ending cash reserve" def="Cumulative cash at the end of the horizon, after off-farm income, hunting, family living, and a rough income-tax estimate. This is the liquidity / survival measure." />
             <DefRow term="Real net worth growth" def="Cumulative change in inflation-adjusted net worth (cattle + land + machinery + cash) over the horizon. The long-term wealth measure." />
           </tbody>
         </table>
-        <p style={{ margin: "10px 0 0" }}>The <strong>Financial results</strong> tab presents these year by year across three statements — an <strong>Income Statement</strong> (receipts, costs, NCFI, NFI), a <strong>Cash Flow</strong> (NCFI plus off-farm and hunting income, less family withdrawals, to an ending cash reserve), and a <strong>Balance Sheet</strong> in the standard form: total assets (cash, livestock, real estate, machinery) less total liabilities (intermediate-term debt and deferred taxes) equals net worth. The balance-sheet structure, real estate, machinery, debt, and deferred taxes follow the published base run; cash and livestock value adjust to the chosen stocking strategy. A herd-inventory row shows the head carried each year. All three statements update live with the dashboard and assumptions.</p>
+        <p style={{ margin: "10px 0 0" }}>The <strong>Financial results</strong> tab presents these year by year across three statements: an <strong>Income Statement</strong> (receipts, costs, NCFI, NFI), a <strong>Cash Flow</strong> (NCFI plus off-farm and hunting income, less family withdrawals, to an ending cash reserve), and a <strong>Balance Sheet</strong> in the standard form: total assets (cash, livestock, real estate, machinery) less total liabilities (intermediate-term debt and deferred taxes) equals net worth. The balance-sheet structure, real estate, machinery, debt, and deferred taxes follow the published base run; cash and livestock value adjust to the chosen stocking strategy. A herd-inventory row shows the head carried each year. All three statements update live with the dashboard and assumptions.</p>
       </DocSection>
 
       <DocSection title="The timing &amp; price controls">
-        <strong>Destock year / amount</strong> and <strong>restock year / amount</strong> place the herd changes anywhere in the horizon; the herd ramps linearly between the destock and restock years. <strong>Forage recovers by</strong> sets when full feeding gives way to maintenance feed. The <strong>price path</strong> holds Year 1 at the 2026 values and evolves later years at the trend you choose (the 2026 baseline trends about −3%/year, reflecting the projected cattle-price cycle); any single year can be overridden by typing into the price table.
+        <strong>Destock year / amount</strong> and <strong>restock year / amount</strong> place the herd changes anywhere in the horizon; the herd ramps linearly between the destock and restock years. <strong>Forage recovers by</strong> sets when full feeding gives way to maintenance feed. The <strong>price path</strong> holds Year 1 at the 2026 values and evolves later years at two separate trends: one for cattle prices (steer, heifer, cull) and one for feed (hay and supplement), since the two rarely move together, especially in drought. Both default to 0%. The published runs assumed a cattle-price decline of roughly 3%/year with flat feed, so a flat cattle path reads somewhat higher. Any single year can be overridden by typing into the price table. When the strategy matches one of the nine published runs at the default timing, the herd path follows the published stocking pattern, including the within-year sell-down, instead of a smooth ramp. The dashboard also offers a <strong>price-risk band</strong> (the shaded area on the income chart shows NCFI if cattle prices run 10, 15, or 20% above or below your path) and a <strong>pin-to-compare</strong> button that holds one strategy fixed while you explore another; both strategies are evaluated under identical prices and assumptions.
       </DocSection>
 
       <DocSection title="What the tool does not capture">
-        It is an illustration for a representative ranch, not a whole-farm tax model. It does not re-run the full FARM Assistance machinery for off-anchor strategies, model individual-ranch debt structures, or price the agronomic cost of overgrazing the retained herd's pasture. Off-farm income and hunting support cash flow in every strategy, so the destock/restock choice is what moves the result on the margin. Actual outcomes vary by producer, management, and markets. This is decision-support, not financial advice.
+        It is an illustration for a representative ranch, not a whole-farm tax model. Cash flows are not discounted: the ten-year figures are simple averages and nominal accumulations, matching how the published FARM Assistance runs report them, and no interest rate is assumed on cash balances or debt. Net-worth growth is the only inflation-adjusted measure (a 2.7% deflator). It does not re-run the full FARM Assistance machinery for off-anchor strategies, model individual-ranch debt structures, or price the agronomic cost of overgrazing the retained herd's pasture. Off-farm income and hunting support cash flow in every strategy, so the destock/restock choice is what moves the result on the margin. Actual outcomes vary by producer, management, and markets. This is decision-support, not financial advice.
       </DocSection>
 
       <DocSection title="The optimizer (how it finds the &quot;best&quot; strategy)">
-        The Optimizer tab solves a <strong>multi-objective optimization by exhaustive grid search</strong>. The decision variables are destock % and restock %; every combination on the grid (231 strategies) is run through the same engine the dashboard uses. Because all feasible strategies are evaluated, the reported optimum is the global best for your settings — there is no solver, sampling, or approximation to second-guess.
+        The Optimizer tab solves a <strong>multi-objective optimization by exhaustive grid search</strong>. The decision variables are destock % and restock %; every combination on the grid (231 strategies) is run through the same engine the dashboard uses. Because all feasible strategies are evaluated, the reported optimum is the global best for your settings; there is no solver, sampling, or approximation to second-guess.
         <Formula>
           maximize&nbsp;&nbsp;U(d, r) = w₁·Ñ(d,r) + w₂·C̃(d,r) + w₃·W̃(d,r)<br />
           subject to&nbsp;restock r ≤ guardrail cap<br /><br />
@@ -738,11 +855,11 @@ function DocTab() {
           each min-max normalized to 0–1 across all strategies,<br />
           and w₁, w₂, w₃ are the weights you set (Σw = 1).
         </Formula>
-        The three goals disagree — cash profit favors a lighter restock, equity favors a heavier herd — so there is no single &quot;best&quot; without a value judgment. Sliding the weights traces the <strong>trade-off (Pareto) frontier</strong> between cash today and equity tomorrow. The <strong>range-safe optimum</strong> repeats the search after removing every strategy that restocks above your guardrail, pricing the drought-resilience cost the dollar figures alone ignore. The optimizer re-runs automatically whenever you change a price, an assumption, the weights, or the guardrail.
+        The three goals disagree (cash profit favors a lighter restock, equity favors a heavier herd), so there is no single &quot;best&quot; without a value judgment. Sliding the weights traces the <strong>trade-off (Pareto) frontier</strong> between cash today and equity tomorrow. The <strong>range-safe optimum</strong> repeats the search after removing every strategy that restocks above your guardrail, pricing the drought-resilience cost the dollar figures alone ignore. A <strong>stress test</strong> toggle re-scores every strategy with cattle prices 15% below your path, favoring plans that hold up when the market turns; each top strategy also reports its adverse-market NCFI. The optimizer re-runs automatically whenever you change a price, an assumption, the weights, the guardrail, or the stress toggle.
       </DocSection>
 
       <DocSection title="Limitations of the optimizer">
-        Three honest caveats for anyone presenting it. <strong>First</strong>, the optimum is only as good as the model beneath it: away from the nine published runs the figures are engine interpolation, so the optimizer finds the best strategy <em>within the hybrid model's representation</em>, not a fresh FARM Assistance result. <strong>Second</strong>, it responds strongly and correctly to the price and cost assumptions a producer is most likely to explore (cattle prices, feed, replacement cost), but to a few structural assumptions — herd size, calving rate — it responds only weakly, because those scale both the engine and its baseline reference and partly cancel in the sensitivity ratio; a genuinely different ranch (say 200 cows) really wants a new FARM Assistance run to re-anchor. <strong>Third</strong>, it optimizes the herd-size levers only at fixed timing, and it does not yet model price or weather uncertainty — it finds the best <em>average</em> strategy, not the most robust one under risk. Treat the result as a well-structured starting point for discussion with an Extension specialist, not a prescription.
+        Three honest caveats for anyone presenting it. <strong>First</strong>, the optimum is only as good as the model beneath it: away from the nine published runs the figures are engine interpolation, so the optimizer finds the best strategy <em>within the hybrid model's representation</em>, not a fresh FARM Assistance result. <strong>Second</strong>, it responds strongly and correctly to the price and cost assumptions a producer is most likely to explore (cattle prices, feed, replacement cost), but to a few structural assumptions (herd size, calving rate) it responds only weakly, because those scale both the engine and its baseline reference and partly cancel in the sensitivity ratio; a genuinely different ranch (say 200 cows) really wants a new FARM Assistance run to re-anchor. <strong>Third</strong>, it optimizes the herd-size levers only at fixed timing. The adverse-market stress test is simple scenario analysis (a uniform 15% cattle-price haircut), not the full stochastic simulation FARM Assistance runs; weather risk and price volatility beyond that band are not modeled. Treat the result as a well-structured starting point for discussion with an Extension specialist, not a prescription.
       </DocSection>
 
       <div style={{ background: C.paperWarm, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "14px 18px", fontSize: 12.5, color: "#7A6E68", lineHeight: 1.6 }}>
@@ -758,7 +875,7 @@ function DocTab() {
    ============================================================ */
 const TEAM = [
   { name: "Megan Clayton", email: "Megan.Clayton@ag.tamu.edu", role: "Professor and Extension Specialist", unit: "Rangeland, Wildlife and Fisheries Management" },
-  { name: "Samuel Womble", email: "Sam.Womble@ag.tamu.edu", role: "County Extension Agent — Agriculture and Natural Resources", unit: "Kerr County Office" },
+  { name: "Samuel Womble", email: "Sam.Womble@ag.tamu.edu", role: "County Extension Agent, Agriculture and Natural Resources", unit: "Kerr County Office" },
   { name: "Gregory Kaase", email: "Gregory.Kaase@ag.tamu.edu", role: "Senior Extension Program Specialist", unit: "Agricultural Economics" },
   { name: "Karl Harborth", email: "karl.harborth@ag.tamu.edu", role: "Assistant Professor and Extension Livestock Specialist", unit: "Animal Science" },
   { name: "Yuri Calil", email: "yuri.calil@ag.tamu.edu", role: "Assistant Professor and Extension Specialist", unit: "Agricultural Economics" },
@@ -783,16 +900,16 @@ function TeamTab() {
       </p>
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(330px, 1fr))", gap: 14, marginBottom: 30 }}>
         <AboutPoint n={1} title="Why it matters">
-          Recurring, intensifying drought is among the costliest threats to South Texas cow-calf operations. When forage runs short, producers must choose between feeding through at rising cost or selling down the herd — a decision that shapes profitability, cash flow, and rangeland health for a decade. Many of these choices are made under pressure, with limited time to weigh the long-run economics.
+          Recurring, intensifying drought is among the costliest threats to South Texas cow-calf operations. When forage runs short, producers must choose between feeding through at rising cost or selling down the herd, a decision that shapes profitability, cash flow, and rangeland health for a decade. Many of these choices are made under pressure, with limited time to weigh the long-run economics.
         </AboutPoint>
         <AboutPoint n={2} title="Who it serves">
           South Texas cow-calf producers and the Extension agents and specialists who advise them. The tool is built for use in workshops and one-on-one consultations, where a specialist can walk a producer through the trade-offs using a representative ranch and the producer's own price and herd assumptions.
         </AboutPoint>
         <AboutPoint n={3} title="The Extension response">
-          Grounded in the FARM Assistance strategic planning model, this tool turns a peer-reviewed drought-stocking analysis into an interactive, classroom-ready dashboard. Producers can adjust destocking and restocking timing, prices, and herd assumptions and immediately see the projected income, cash flow, and net-worth consequences over a ten-year horizon. A built-in optimizer goes a step further: it searches every stocking strategy and surfaces the one that best fits what the producer values — cash today, liquidity, or long-term equity — making the trade-offs explicit rather than abstract.
+          Grounded in the FARM Assistance strategic planning model, this tool turns a peer-reviewed drought-stocking analysis into an interactive, classroom-ready dashboard. Producers can adjust destocking and restocking timing, prices, and herd assumptions and immediately see the projected income, cash flow, and net-worth consequences over a ten-year horizon. A built-in optimizer goes a step further: it searches every stocking strategy and surfaces the one that best fits what the producer values (cash today, liquidity, or long-term equity), making the trade-offs explicit rather than abstract.
         </AboutPoint>
         <AboutPoint n={4} title="Expected outcome">
-          Producers leave better equipped to plan stocking strategies that protect both profitability and the range. The intended behavioral change is a shift toward proactive, economically informed destocking and restocking decisions — and lighter, more drought-resilient stocking rates — rather than reactive, feed-through-it responses. By letting producers weigh competing financial goals and a rangeland guardrail side by side, the tool helps them recognize that the right answer depends on their own priorities, and to plan accordingly.
+          Producers leave better equipped to plan stocking strategies that protect both profitability and the range. The intended behavioral change is a shift toward proactive, economically informed destocking and restocking decisions, and lighter, more drought-resilient stocking rates, rather than reactive, feed-through-it responses. By letting producers weigh competing financial goals and a rangeland guardrail side by side, the tool helps them recognize that the right answer depends on their own priorities, and to plan accordingly.
         </AboutPoint>
       </div>
 
@@ -809,9 +926,6 @@ function TeamTab() {
             <a href={`mailto:${p.email}`} style={{ display: "inline-block", marginTop: 9, fontSize: 12.5, color: C.orange, fontWeight: 700, textDecoration: "none", fontFamily: "'IBM Plex Mono', monospace", wordBreak: "break-all" }}>{p.email}</a>
           </div>
         ))}
-      </div>
-      <div style={{ marginTop: 20, background: C.paperWarm, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "14px 18px", fontSize: 12.5, color: "#7A6E68", lineHeight: 1.6 }}>
-        Texas A&amp;M AgriLife Extension Service · The Texas A&amp;M University System. Educational programs are open to all without regard to socioeconomic level, race, color, sex, religion, disability, or national origin.
       </div>
     </div>
   );
@@ -851,11 +965,12 @@ function ResultCard({ title, accent, c, sub, onUse, current }) {
     </div>
   );
 }
-function OptimizerTab({ s, prices, cal, onApply }) {
+function OptimizerTab({ s, prices, cal, assump, onApply }) {
   const [w, setW] = useState({ ncfi: 50, cash: 25, nw: 25 });
   const [rCap, setRCap] = useState(85);
+  const [stress, setStress] = useState(false);
   const setWeight = (k) => (v) => setW((p) => ({ ...p, [k]: v }));
-  const result = useMemo(() => optimize(s, prices, cal, { ncfi: w.ncfi, cash: w.cash, nw: w.nw }, rCap), [s, prices, cal, w, rCap]);
+  const result = useMemo(() => optimize(s, prices, cal, { ncfi: w.ncfi, cash: w.cash, nw: w.nw }, rCap, assump, stress, 15), [s, prices, cal, assump, w, rCap, stress]);
   const { best, top3, bestSafe, scored, dGrid, rGrid } = result;
   const medal = ["1st", "2nd", "3rd"];
 
@@ -863,12 +978,12 @@ function OptimizerTab({ s, prices, cal, onApply }) {
     <div style={{ paddingTop: 22 }}>
       <h2 style={{ margin: "0 0 6px", fontFamily: "'Bitter', serif", fontSize: 22, color: C.ink }}>Optimal stocking strategy</h2>
       <p style={{ margin: "0 0 18px", color: "#8A7D77", fontSize: 13.5, lineHeight: 1.6, maxWidth: 760 }}>
-        This searches every destock/restock combination on a grid and finds the one that best matches what you value. Because the "best" strategy depends on whether you weight cash profit, liquidity, or long-term equity, you set the weights — the optimizer walks that trade-off for you. It uses your current prices and assumptions from the other tabs.
+        This searches every destock/restock combination on a grid and finds the one that best matches what you value. Because the "best" strategy depends on whether you weight cash profit, liquidity, or long-term equity, you set the weights, and the optimizer walks that trade-off for you. It uses your current prices and assumptions from the other tabs.
       </p>
       <div style={{ display: "flex", alignItems: "center", gap: 10, background: C.paperWarm, border: `1px solid ${C.line}`, borderLeft: `4px solid ${C.green}`, borderRadius: 10, padding: "10px 15px", marginBottom: 18, maxWidth: 760 }}>
         <span style={{ width: 8, height: 8, borderRadius: "50%", background: C.green, flexShrink: 0 }} />
         <span style={{ fontSize: 12.5, color: "#5A4F4A", lineHeight: 1.5 }}>
-          <strong style={{ color: C.ink }}>Re-optimized live</strong> for your current inputs — steer <strong>${prices[0].steer.toFixed(2)}</strong>/lb, cull <strong>${prices[0].cull.toFixed(2)}</strong>/lb, bred cow <strong>${fmtNum(cal.bredCowPrice)}</strong>, feed <strong>${fmtNum(cal.hayPrice)}</strong>/${fmtNum(cal.cubePrice)} hay/supp, herd <strong>{cal.herd0}</strong> cows. Change anything on the Assumptions or Dashboard tabs and this re-runs automatically.
+          <strong style={{ color: C.ink }}>Re-optimized live</strong> for your current inputs: steer <strong>${prices[0].steer.toFixed(2)}</strong>/lb, cull <strong>${prices[0].cull.toFixed(2)}</strong>/lb, bred cow <strong>${fmtNum(cal.bredCowPrice)}</strong>, feed <strong>${fmtNum(cal.hayPrice)}</strong>/${fmtNum(cal.cubePrice)} hay/supp, herd <strong>{cal.herd0}</strong> cows. Change anything on the Assumptions or Dashboard tabs and this re-runs automatically.
         </span>
       </div>
 
@@ -879,12 +994,14 @@ function OptimizerTab({ s, prices, cal, onApply }) {
             <Slider label="Cash profit (avg NCFI)" value={w.ncfi} min={0} max={100} step={5} suffix="%" accent={C.orange} onChange={setWeight("ncfi")} />
             <Slider label="Liquidity (ending cash)" value={w.cash} min={0} max={100} step={5} suffix="%" accent={C.teal} onChange={setWeight("cash")} />
             <Slider label="Long-term equity (net worth)" value={w.nw} min={0} max={100} step={5} suffix="%" accent={C.green} onChange={setWeight("nw")} />
+            <button onClick={() => setStress(!stress)} style={{ marginTop: 4, marginBottom: 8, width: "100%", background: stress ? C.coral : "#fff", color: stress ? "#fff" : C.coral, border: `1.5px solid ${C.coral}`, borderRadius: 9, padding: "8px", fontWeight: 700, fontSize: 12.5, cursor: "pointer" }}>{stress ? "Stress test on: ranking by adverse market" : "Stress test: rank by adverse market"}</button>
+            <div style={{ fontSize: 11, color: "#8A7D77", marginBottom: 6 }}>{stress ? "Strategies are scored with cattle prices 15% below your path, favoring plans that hold up when the market turns." : "Turn on to score every strategy with cattle prices 15% below your path."}</div>
             <div style={{ fontSize: 11, color: "#8A7D77", marginTop: 2, paddingTop: 8, borderTop: `1px solid ${C.line}` }}>
-              Weights are relative — {w.ncfi}:{w.cash}:{w.nw} normalizes to {(w.ncfi / (w.ncfi + w.cash + w.nw + 0.0001) * 100).toFixed(0)}% / {(w.cash / (w.ncfi + w.cash + w.nw + 0.0001) * 100).toFixed(0)}% / {(w.nw / (w.ncfi + w.cash + w.nw + 0.0001) * 100).toFixed(0)}%.
+              Weights are relative; {w.ncfi}:{w.cash}:{w.nw} normalizes to {(w.ncfi / (w.ncfi + w.cash + w.nw + 0.0001) * 100).toFixed(0)}% / {(w.cash / (w.ncfi + w.cash + w.nw + 0.0001) * 100).toFixed(0)}% / {(w.nw / (w.ncfi + w.cash + w.nw + 0.0001) * 100).toFixed(0)}%.
             </div>
           </Panel>
           <Panel title="Rangeland guardrail" subtitle="Cap the permanent (restock) herd to protect the range against the next drought." accent={C.green}>
-            <Slider label="Max restock allowed" value={rCap} min={50} max={100} step={5} suffix="%" accent={C.green} onChange={setRCap} help="The range-safe optimum won't restock above this. The 2011 study notes a lighter herd withstands future drought better — a cost the dollar figures don't price." />
+            <Slider label="Max restock allowed" value={rCap} min={50} max={100} step={5} suffix="%" accent={C.green} onChange={setRCap} help="The range-safe optimum won't restock above this. The 2011 study notes a lighter herd withstands future drought better, a cost the dollar figures don't price." />
           </Panel>
         </div>
 
@@ -895,20 +1012,20 @@ function OptimizerTab({ s, prices, cal, onApply }) {
             <ResultCard title={`Range-safe (restock ≤ ${rCap}%)`} accent={C.green} c={bestSafe} sub="Best strategy within the guardrail" onUse={onApply} current={bestSafe && s.destockPct === bestSafe.d && s.restockPct === bestSafe.r} />
           </div>
 
-          <Panel title="Top three strategies" subtitle="Ranked by your weighted objective. Ties are common — nearby strategies often score within a hair." accent={C.coral}>
+          <Panel title="Top three strategies" subtitle="Ranked by your weighted objective. Ties are common; nearby strategies often score within a hair." accent={C.coral}>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               {top3.map((c, i) => (
                 <div key={i} style={{ display: "flex", alignItems: "center", gap: 12, padding: "9px 13px", background: i === 0 ? C.orange + "10" : C.paperWarm, borderRadius: 10, border: `1px solid ${i === 0 ? C.orange + "44" : C.line}` }}>
                   <span style={{ fontFamily: "'Bitter', serif", fontWeight: 800, fontSize: 13, color: i === 0 ? C.orange : "#8A7D77", minWidth: 26 }}>{medal[i]}</span>
                   <span style={{ fontWeight: 700, fontSize: 13.5, color: C.ink, minWidth: 165 }}>Destock {c.d}% / Restock {c.r}%</span>
-                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#6A5F58", flex: 1 }}>NCFI {fmt(c.ncfi)} · cash {fmt(c.cash)} · NW {Math.round(c.nw)}%</span>
+                  <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 12, color: "#6A5F58", flex: 1 }}>NCFI {fmt(c.ncfi)} · cash {fmt(c.cash)} · NW {Math.round(c.nw)}% · adverse {fmt(c.ncfiLow)}</span>
                   <span style={{ fontFamily: "'IBM Plex Mono', monospace", fontSize: 11.5, fontWeight: 700, color: C.orange, background: "#fff", padding: "2px 8px", borderRadius: 6, border: `1px solid ${C.line}` }}>U {c.U.toFixed(2)}</span>
                 </div>
               ))}
             </div>
           </Panel>
 
-          <Panel title="Objective surface" subtitle="Every strategy scored by your weighted goal — darker is better. ★ is the optimum, ✓ the range-safe pick. Click any cell to load it." accent={C.slate}>
+          <Panel title="Objective surface" subtitle="Every strategy scored by your weighted goal; darker is better. ★ is the optimum, ✓ the range-safe pick. Click any cell to load it." accent={C.slate}>
             <div style={{ display: "flex", gap: 10 }}>
               <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", gap: 2 }}>
                 <div style={{ fontSize: 9, color: "#8A7D77", writingMode: "vertical-rl", transform: "rotate(180deg)", textAlign: "center", fontWeight: 700 }}>RESTOCK %</div>
@@ -938,7 +1055,7 @@ function OptimizerTab({ s, prices, cal, onApply }) {
           <div style={{ background: `linear-gradient(120deg, #500000, #6B1A1A)`, color: "#fff", borderRadius: 14, padding: "18px 22px" }}>
             <h3 style={{ margin: "0 0 8px", fontFamily: "'Bitter', serif", fontSize: 16, color: "#E8C9A0" }}>How the optimization works</h3>
             <p style={{ margin: 0, fontSize: 12.5, lineHeight: 1.65, color: "#E6E1D8" }}>
-              This is a multi-objective optimization solved by exhaustive grid search over the decision variables — destock % and restock %. Each candidate is run through the same engine the dashboard uses. The three objectives (NCFI, ending cash, net-worth growth) are normalized to a common 0–1 scale, then combined with your weights into a single utility. Because every feasible strategy is evaluated, the reported optimum is the global best for your weights — no solver, no approximation. Tightening the rangeland guardrail removes strategies that restock above the cap, giving the best <em>range-safe</em> choice. Slide the weights to trace the trade-off frontier between cash today and equity tomorrow.
+              This is a multi-objective optimization solved by exhaustive grid search over the decision variables: destock % and restock %. Each candidate is run through the same engine the dashboard uses. The three objectives (NCFI, ending cash, net-worth growth) are normalized to a common 0–1 scale, then combined with your weights into a single utility. Because every feasible strategy is evaluated, the reported optimum is the global best for your weights, with no solver and no approximation. Tightening the rangeland guardrail removes strategies that restock above the cap, giving the best <em>range-safe</em> choice. Slide the weights to trace the trade-off frontier between cash today and equity tomorrow.
             </p>
           </div>
         </div>
@@ -953,18 +1070,30 @@ export default function App() {
   const [cal, setCal] = useState({ ...CAL });
   const [tab, setTab] = useState(0);
   const [trend, setTrendRaw] = useState(DEFAULTS.priceTrend);
-  const [prices, setPrices] = useState(() => buildPrices(DEFAULTS.horizon, DEFAULTS.priceTrend, null, CAL));
+  const [feedTrend, setFeedTrendRaw] = useState(0);
+  const [prices, setPrices] = useState(() => buildPrices(DEFAULTS.horizon, DEFAULTS.priceTrend, null, CAL, 0));
+  const [assump, setAssump] = useState(() => buildAssump(DEFAULTS.horizon, CAL, null));
   const [showPrices, setShowPrices] = useState(false);
   const [showValid, setShowValid] = useState(false);
 
   // keep price path length in sync with horizon, preserving overrides
   useEffect(() => {
-    setPrices((prev) => buildPrices(s.horizon, trend, prev, cal));
-  }, [s.horizon, trend, cal.steerPrice, cal.heiferPrice, cal.cullCowPrice, cal.hayPrice, cal.cubePrice]);
-  const setTrend = (v) => { setTrendRaw(v); setPrices((prev) => buildPrices(s.horizon, v, prev.map(p => ({ ...p, override: p.override })), cal)); };
+    setPrices((prev) => buildPrices(s.horizon, trend, prev, cal, feedTrend));
+  }, [s.horizon, trend, feedTrend, cal.steerPrice, cal.heiferPrice, cal.cullCowPrice, cal.hayPrice, cal.cubePrice]);
+  const setTrend = (v) => { setTrendRaw(v); setPrices((prev) => buildPrices(s.horizon, v, prev.map(p => ({ ...p, override: p.override })), cal, feedTrend)); };
+  const setFeedTrend = (v) => { setFeedTrendRaw(v); setPrices((prev) => buildPrices(s.horizon, trend, prev.map(p => ({ ...p, override: p.override })), cal, v)); };
+  useEffect(() => {
+    setAssump((prev) => buildAssump(s.horizon, cal, prev));
+  }, [s.horizon, cal.calvingRate, cal.cullRate, cal.maintFeedCow, cal.prodCostCow, cal.offFarm, cal.familyLiving, cal.costInflation]);
 
-  const m = useMemo(() => model({ ...s, herd0: cal.herd0, calvingRate: cal.calvingRate }, prices, cal), [s, prices, cal]);
-  const mBase = useMemo(() => model({ ...s, herd0: cal.herd0, calvingRate: cal.calvingRate, destockPct: 0, restockPct: 100, destockYear: 1, restockYear: 3 }, prices, cal), [s, prices, cal]);
+  const [riskBand, setRiskBand] = useState(15);
+  const [pinned, setPinned] = useState(null);
+  const mPin = useMemo(() => pinned ? model({ ...s, ...pinned, herd0: cal.herd0, calvingRate: cal.calvingRate }, prices, cal, assump) : null, [pinned, s.horizon, prices, cal, assump]);
+  const scalePrices = (arr, k) => arr.map((p) => ({ ...p, steer: p.steer * k, heifer: p.heifer * k, cull: p.cull * k }));
+  const m = useMemo(() => model({ ...s, herd0: cal.herd0, calvingRate: cal.calvingRate }, prices, cal, assump), [s, prices, cal, assump]);
+  const mLow = useMemo(() => riskBand ? model({ ...s, herd0: cal.herd0, calvingRate: cal.calvingRate }, scalePrices(prices, 1 - riskBand / 100), cal, assump) : null, [s, prices, cal, assump, riskBand]);
+  const mHigh = useMemo(() => riskBand ? model({ ...s, herd0: cal.herd0, calvingRate: cal.calvingRate }, scalePrices(prices, 1 + riskBand / 100), cal, assump) : null, [s, prices, cal, assump, riskBand]);
+  const mBase = useMemo(() => model({ ...s, herd0: cal.herd0, calvingRate: cal.calvingRate, destockPct: 0, restockPct: 100, destockYear: 1, restockYear: 3 }, prices, cal, assump), [s, prices, cal, assump]);
   const years = Array.from({ length: s.horizon }, (_, i) => "Yr " + (i + 1));
   const best = bestRun();
   const ncfiDelta = m.avgNcfi - mBase.avgNcfi;
@@ -980,7 +1109,7 @@ export default function App() {
             <h1 style={{ margin: 0, fontFamily: "'Bitter', serif", fontSize: 24, fontWeight: 800, letterSpacing: "-0.02em" }}>Ranching in a <span style={{ color: "#E8C9A0" }}>New Climate</span></h1>
             <div style={{ fontSize: 12, color: "#E3CFCF", marginTop: 2 }}>Stocking strategy during drought · destock &amp; restock economics · 50-cow / 400-acre South Texas ranch (2026 assumptions)</div>
             <div style={{ fontSize: 11.5, color: "#F0DADA", marginTop: 7, padding: "7px 11px", background: "#ffffff18", borderRadius: 8, borderLeft: "3px solid #E8C9A0", maxWidth: 760, lineHeight: 1.5 }}>
-              <strong>Educational use only.</strong> This is a teaching and decision-support tool that illustrates the economics of drought stocking strategies for a representative ranch. It is not investment, financial, tax, or veterinary advice, and its figures should not be applied to an actual operation without guidance from a Texas A&amp;M AgriLife Extension agent or specialist who can account for your herd, land, markets, and finances.
+              <strong>Educational use only.</strong> This is a teaching and decision-support tool that illustrates the economics of drought stocking strategies for a representative ranch. It is not investment, financial, tax, or animal science advice, and its figures should not be applied to an actual operation without guidance from a Texas A&amp;M AgriLife Extension agent or specialist.
             </div>
           </div>
           <nav style={{ display: "flex", gap: 4, marginTop: 18, flexWrap: "wrap" }}>
@@ -992,9 +1121,9 @@ export default function App() {
       </header>
 
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "0 24px 70px" }}>
-        {tab === 1 && <AssumptionsTab cal={cal} setCal={setCal} resetCal={() => setCal({ ...CAL })} />}
-        {tab === 2 && <FinancialsTab m={m} s={sEff} years={years} cal={cal} />}
-        {tab === 3 && <OptimizerTab s={sEff} prices={prices} cal={cal} onApply={(d, r) => { setS((st) => ({ ...st, destockPct: d, restockPct: r })); setTab(0); }} />}
+        {tab === 1 && <AssumptionsTab cal={cal} setCal={setCal} resetCal={() => { setCal({ ...CAL }); setAssump(buildAssump(s.horizon, { ...CAL }, null)); }} assump={assump} setAssump={setAssump} years={years} />}
+        {tab === 2 && <FinancialsTab m={m} s={sEff} years={years} cal={cal} assump={assump} />}
+        {tab === 3 && <OptimizerTab s={sEff} prices={prices} cal={cal} assump={assump} onApply={(d, r) => { setS((st) => ({ ...st, destockPct: d, restockPct: r })); setTab(0); }} />}
         {tab === 4 && <DocTab />}
         {tab === 5 && <TeamTab />}
         {tab === 0 && (<>
@@ -1022,34 +1151,90 @@ export default function App() {
               <Slider label="Destock amount" value={s.destockPct} min={0} max={100} step={5} suffix="%" accent={C.coral} onChange={set("destockPct")} help={s.destockPct === 0 ? "Keep the full herd (feed through)." : "Share of the herd sold down."} />
               <div style={{ height: 1, background: C.line, margin: "4px 0 16px" }} />
               <Slider label="Restock by" value={s.restockYear} min={s.destockYear} max={s.horizon} step={1} fmtVal={(v) => "Year " + v} accent={C.teal} onChange={set("restockYear")} help="The year the herd reaches its restock level." />
-              <Slider label="Restock amount" value={s.restockPct} min={50} max={100} step={5} suffix="%" accent={C.teal} onChange={set("restockPct")} help={s.restockPct >= 100 ? "Rebuild to the original herd size." : "Rebuild only partway — a lighter permanent herd."} />
+              <Slider label="Restock amount" value={s.restockPct} min={50} max={100} step={5} suffix="%" accent={C.teal} onChange={set("restockPct")} help={s.restockPct >= 100 ? "Rebuild to the original herd size." : "Rebuild only partway to keep a lighter permanent herd."} />
               <div style={{ height: 1, background: C.line, margin: "4px 0 16px" }} />
               <Slider label="Forage recovers by" value={s.feedRecoverYear} min={1} max={s.horizon} step={1} fmtVal={(v) => "Year " + v} accent={C.green} onChange={set("feedRecoverYear")} help="Full feeding until this year, then maintenance feed as the range recovers." />
-              <button onClick={() => { setS({ ...DEFAULTS }); setTrend(DEFAULTS.priceTrend); setPrices(buildPrices(DEFAULTS.horizon, DEFAULTS.priceTrend)); }}
+              <button onClick={() => setPinned(pinned ? null : { destockPct: s.destockPct, restockPct: s.restockPct, destockYear: s.destockYear, restockYear: s.restockYear, feedRecoverYear: s.feedRecoverYear })}
+                style={{ marginTop: 6, width: "100%", background: pinned ? C.indigo : "#fff", border: `1.5px solid ${C.indigo}`, color: pinned ? "#fff" : C.indigo, fontWeight: 700, padding: "9px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{pinned ? "Unpin comparison" : "Pin this strategy to compare"}</button>
+              <button onClick={() => { setS({ ...DEFAULTS }); setTrendRaw(DEFAULTS.priceTrend); setFeedTrendRaw(0); setPrices(buildPrices(DEFAULTS.horizon, DEFAULTS.priceTrend, null, cal, 0)); }}
                 style={{ marginTop: 6, width: "100%", background: "#fff", border: `1.5px solid ${C.coral}`, color: C.coral, fontWeight: 700, padding: "9px", borderRadius: 9, cursor: "pointer", fontSize: 13 }}>{"↺"} Reset to baseline</button>
             </Panel>
           </div>
 
           {/* RIGHT: visuals */}
           <div>
-            <Panel title="Net income over the planning horizon" subtitle="Net Cash Farm Income (solid) vs. Net Farm Income after depreciation (dashed). NFI lags in recovery years as purchased cows depreciate — the pattern the 2011 study describes." accent={C.orange}>
-              <DualChart years={years} ncfi={m.ncfiTraj} nfi={m.nfiTraj} />
-              <div style={{ display: "flex", gap: 18, fontSize: 12, color: "#7A7264", marginTop: 8 }}>
+            {pinned && mPin && (() => {
+              const lastA = mPin.path[mPin.path.length - 1], lastB = m.path[m.path.length - 1];
+              const rows = [
+                ["Avg Net Cash Farm Income", fmt(mPin.avgNcfi), fmt(m.avgNcfi), fmt(m.avgNcfi - mPin.avgNcfi)],
+                ["Avg Net Farm Income", fmt(mPin.avgNfi), fmt(m.avgNfi), fmt(m.avgNfi - mPin.avgNfi)],
+                ["Ending cash reserve", fmt(mPin.endCash), fmt(m.endCash), fmt(m.endCash - mPin.endCash)],
+                ["Real net-worth growth", Math.round(mPin.nwGrowth) + "%", Math.round(m.nwGrowth) + "%", (m.nwGrowth - mPin.nwGrowth >= 0 ? "+" : "") + (m.nwGrowth - mPin.nwGrowth).toFixed(1) + " pts"],
+                ["Herd after restock", lastA + " head", lastB + " head", (lastB - lastA >= 0 ? "+" : "") + (lastB - lastA) + " head"],
+              ];
+              const tdp = { padding: "7px 10px", fontSize: 12, fontFamily: "'IBM Plex Mono', monospace", textAlign: "right", borderBottom: `1px solid ${C.line}` };
+              return (
+                <Panel title="Comparison: pinned vs. current" accent={C.indigo}
+                  subtitle={`Pinned: destock ${pinned.destockPct}% in Yr ${pinned.destockYear}, restock ${pinned.restockPct}% by Yr ${pinned.restockYear}. Current: destock ${s.destockPct}% in Yr ${s.destockYear}, restock ${s.restockPct}% by Yr ${s.restockYear}. Both evaluated under your current prices and assumptions.`}>
+                  <div style={{ overflowX: "auto" }}>
+                    <table style={{ borderCollapse: "collapse", width: "100%", minWidth: 520 }}>
+                      <thead><tr>
+                        <th style={{ padding: "7px 10px", fontSize: 11, color: "#fff", background: C.indigo, textAlign: "left", borderRadius: "8px 0 0 0" }}>Measure</th>
+                        <th style={{ padding: "7px 10px", fontSize: 11, color: "#fff", background: C.indigo, textAlign: "right" }}>Pinned</th>
+                        <th style={{ padding: "7px 10px", fontSize: 11, color: "#fff", background: C.indigo, textAlign: "right" }}>Current</th>
+                        <th style={{ padding: "7px 10px", fontSize: 11, color: "#fff", background: C.indigo, textAlign: "right", borderRadius: "0 8px 0 0" }}>Difference</th>
+                      </tr></thead>
+                      <tbody>
+                        {rows.map((r, i) => (
+                          <tr key={i} style={{ background: i % 2 ? C.paperWarm : "#fff" }}>
+                            <td style={{ ...tdp, textAlign: "left", fontFamily: "'Source Sans 3', sans-serif", fontWeight: 600, color: C.ink }}>{r[0]}</td>
+                            <td style={{ ...tdp, color: "#6A5F58" }}>{r[1]}</td>
+                            <td style={{ ...tdp, fontWeight: 700, color: C.ink }}>{r[2]}</td>
+                            <td style={{ ...tdp, fontWeight: 700, color: String(r[3]).startsWith("\u2212") || String(r[3]).startsWith("-") ? C.coral : C.green }}>{r[3]}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </Panel>
+              );
+            })()}
+            <Panel title="Net income over the planning horizon" subtitle="Net Cash Farm Income (solid) vs. Net Farm Income after depreciation (dashed). NFI lags in recovery years as purchased cows depreciate, the pattern the 2011 study describes." accent={C.orange}
+              right={<div style={{ display: "flex", gap: 4, alignItems: "center" }}>
+                <span style={{ fontSize: 10.5, color: "#8A8276", marginRight: 4 }}>Price risk</span>
+                {[0, 10, 15, 20].map((b) => (
+                  <button key={b} onClick={() => setRiskBand(b)} style={{ background: riskBand === b ? C.orange : "#fff", color: riskBand === b ? "#fff" : C.orange, border: `1.3px solid ${C.orange}`, borderRadius: 7, padding: "4px 9px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{b === 0 ? "Off" : "\u00b1" + b + "%"}</button>
+                ))}
+              </div>}>
+              <DualChart years={years} ncfi={m.ncfiTraj} nfi={m.nfiTraj} band={riskBand && mLow && mHigh ? { lo: mLow.ncfiTraj, hi: mHigh.ncfiTraj } : null} pinned={pinned && mPin ? mPin.ncfiTraj : null} />
+              <div style={{ display: "flex", gap: 18, fontSize: 12, color: "#7A7264", marginTop: 8, flexWrap: "wrap" }}>
                 <span><span style={{ display: "inline-block", width: 16, height: 4, background: C.orange, borderRadius: 3, marginRight: 6, verticalAlign: "middle" }} />Net Cash Farm Income</span>
                 <span><span style={{ display: "inline-block", width: 16, height: 0, borderTop: `3px dashed ${C.indigo}`, marginRight: 6, verticalAlign: "middle" }} />Net Farm Income</span>
+                {riskBand > 0 && <span><span style={{ display: "inline-block", width: 16, height: 10, background: C.orange + "22", marginRight: 6, verticalAlign: "middle", borderRadius: 2 }} />NCFI if cattle prices run {"\u00b1"}{riskBand}%</span>}
+                {pinned && mPin && <span><span style={{ display: "inline-block", width: 16, height: 0, borderTop: "2px dashed #9A9285", marginRight: 6, verticalAlign: "middle" }} />Pinned strategy NCFI</span>}
               </div>
             </Panel>
 
             <Panel title="Herd path" subtitle="Head carried each year, from the destock/restock timing you set." accent={C.teal}>
               <HerdStrip years={years} path={m.path} herd0={cal.herd0} />
+              {(() => {
+                const maxH = Math.max(...m.path), lastH = m.path[m.path.length - 1];
+                const acMax = maxH > 0 ? (cal.acres / maxH).toFixed(1) : "n/a";
+                const acLast = lastH > 0 ? (cal.acres / lastH).toFixed(1) : "n/a";
+                return (
+                  <div style={{ fontSize: 12, color: "#7A7264", marginTop: 10, padding: "9px 13px", background: C.paperWarm, borderRadius: 9, lineHeight: 1.5 }}>
+                    <strong style={{ color: C.ink }}>Stocking rate:</strong> 1 cow per {acMax} acres at the heaviest year ({maxH} head); 1 cow per {acLast} acres after restock ({lastH} head). A mature cow is roughly one animal unit, so these read as acres per animal unit. Lighter stocking eases grazing pressure and improves drought resilience.
+                  </div>
+                );
+              })()}
             </Panel>
 
             <Panel title="Year-by-year price path" accent={C.coral}
               subtitle="Year 1 holds the 2026 prices; future years evolve at the trend (default flat). Override any single cell to model a specific year. The published runs assumed roughly −3%/year, so a flat path reads somewhat higher."
               right={<button onClick={() => setShowPrices(!showPrices)} style={{ background: showPrices ? C.coral : "#fff", color: showPrices ? "#fff" : C.coral, border: `1.4px solid ${C.coral}`, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{showPrices ? "Hide" : "Edit prices"}</button>}>
               {showPrices
-                ? <PriceTable prices={prices} setPrices={setPrices} years={years} trend={trend} setTrend={setTrend} cal={cal} />
-                : <div style={{ fontSize: 12.5, color: "#8A8276", lineHeight: 1.5 }}>Prices currently trend <strong style={{ color: C.ink }}>{trend > 0 ? "+" : ""}{trend}%/yr</strong> from Year 1's 2026 values (steer ${prices[0].steer.toFixed(2)}, heifer ${prices[0].heifer.toFixed(2)}, cull ${prices[0].cull.toFixed(2)}/lb; hay ${prices[0].hay}, cubes ${prices[0].cube}/ton). Click <em>Edit prices</em> to set each year by hand.</div>}
+                ? <PriceTable prices={prices} setPrices={setPrices} years={years} trend={trend} setTrend={setTrend} feedTrend={feedTrend} setFeedTrend={setFeedTrend} cal={cal} />
+                : <div style={{ fontSize: 12.5, color: "#8A8276", lineHeight: 1.5 }}>Cattle prices trend <strong style={{ color: C.ink }}>{trend > 0 ? "+" : ""}{trend}%/yr</strong> and feed <strong style={{ color: C.ink }}>{feedTrend > 0 ? "+" : ""}{feedTrend}%/yr</strong> from Year 1's 2026 values (steer ${prices[0].steer.toFixed(2)}, heifer ${prices[0].heifer.toFixed(2)}, cull ${prices[0].cull.toFixed(2)}/lb; hay ${prices[0].hay}, cubes ${prices[0].cube}/ton). Click <em>Edit prices</em> to set each year by hand.</div>}
             </Panel>
 
             <Panel title="Validation · the nine FARM Assistance runs" accent={C.green}
@@ -1066,7 +1251,7 @@ export default function App() {
         <div style={{ marginTop: 4, background: `linear-gradient(120deg, #500000, #6B1A1A)`, color: "#fff", borderRadius: 15, padding: "20px 24px" }}>
           <h3 style={{ margin: "0 0 9px", fontFamily: "'Bitter', serif", fontSize: 17, color: "#E8C9A0" }}>Reading the result</h3>
           <p style={{ margin: 0, fontSize: 13, lineHeight: 1.65, color: "#E6E1D8" }}>
-            Across the 2026 runs, destocking modestly and restocking to a <strong>lighter permanent herd (75%)</strong> tops the field — the feed-cost and replacement-purchase savings outweigh the lost calf production, and the lighter stocking rate leaves the range better able to withstand the next drought. NCFI shows the cash story; NFI runs below it through the recovery years because newly purchased cows carry depreciation. Off-farm income and hunting support cash flow in every strategy, so the destock/restock choice is what moves the needle on the margin.
+            Across the 2026 runs, destocking modestly and restocking to a <strong>lighter permanent herd (75%)</strong> tops the field: the feed-cost and replacement-purchase savings outweigh the lost calf production, and the lighter stocking rate leaves the range better able to withstand the next drought. NCFI shows the cash story; NFI runs below it through the recovery years because newly purchased cows carry depreciation. Off-farm income and hunting support cash flow in every strategy, so the destock/restock choice is what moves the needle on the margin.
           </p>
         </div>
         </>)}
