@@ -33,7 +33,7 @@ const fmtNum = (n, dp = 0) => Number(n).toLocaleString("en-US", { minimumFractio
 
 const CAL = {
   herd0: 50, bulls: 2, acres: 400, calvingRate: 86, cullRate: 8,
-  steerWt: 525, heiferWt: 500, steerShare: 0.512,
+  steerWt: 525, heiferWt: 500, steerShare: 0.50,
   steerPrice: 4.50, heiferPrice: 4.30, cullCowPrice: 1.70, cullCowWt: 1100,
   bredCowPrice: 3800, herdSire: 10000,
   hayPrice: 250, cubePrice: 450, hayTonCow: 3.376, cubeTonCow: 1.46,
@@ -193,8 +193,9 @@ function engineYears(s, prices, cal = CAL, aPath = null) {
     const prodCost = head * (A ? A.prodCost : cal.prodCostCow * cInf);
     const bought = Math.max(head - prevHead, 0) + annualCull;
     const replCost = bought * cal.bredCowPrice;
-    const ncfi = calfRev + cullRev - feedCost - prodCost - replCost;
-    out.push({ head, calfRev, cullRev, feedCost, prodCost, replCost, ncfi });
+    const hunt = cal.hunting;
+    const ncfi = calfRev + cullRev + hunt - feedCost - prodCost - replCost;
+    out.push({ head, calfRev, cullRev, hunt, feedCost, prodCost, replCost, ncfi });
     prevHead = head;
   }
   return out;
@@ -209,7 +210,10 @@ function model(s, prices, cal = CAL, aPath = null) {
   const engNow = avgNcfiOf(yrs), engBase = avgNcfiOf(baseYrs);
   const sens = engBase !== 0 ? engNow / engBase : 1;
 
-  const anchorNcfi = idw(s.destockPct, s.restockPct, "ncfi");
+  // Published runs report NCFI excluding hunting (hunting was a separate cash-flow line).
+  // The engine now includes hunting inside NCFI, so the anchor is lifted by the same
+  // amount. This keeps every published strategy reproducing exactly on the new basis.
+  const anchorNcfi = idw(s.destockPct, s.restockPct, "ncfi") + cal.hunting;
   const anchorCash = idw(s.destockPct, s.restockPct, "endCash");
   const anchorNw = idw(s.destockPct, s.restockPct, "nw");
 
@@ -240,7 +244,7 @@ function model(s, prices, cal = CAL, aPath = null) {
     const off = aPath && aPath[i] ? aPath[i].offFarm : cal.offFarm;
     const fam = aPath && aPath[i] ? aPath[i].familyLiving : cal.familyLiving;
     const taxable = Math.max(v + off - fam, 0);
-    cash += v + off + cal.hunting - fam - taxable * 0.18;
+    cash += v + off - fam - taxable * 0.18;
     cashTraj.push(cash);
   });
   // rescale cash trajectory endpoint to the anchored endCash
@@ -650,7 +654,7 @@ function AssumptionsTab({ cal, setCal, resetCal, assump, setAssump, years }) {
 /* ============================================================
    TAB 3 — FINANCIAL RESULTS TABLES
    ============================================================ */
-function FinRow({ label, vals, bold, pct, plain, suffix, section, accent }) {
+function FinRow({ label, vals, bold, pct, plain, suffix, section, accent, editable, editableLiab, onEdit, onLabel, onEditLiab }) {
   const td = { padding: "7px 9px", fontSize: 11.5, textAlign: "right", fontFamily: "'IBM Plex Mono', monospace", whiteSpace: "nowrap" };
   if (section) {
     return (
@@ -660,6 +664,27 @@ function FinRow({ label, vals, bold, pct, plain, suffix, section, accent }) {
     );
   }
   const render = (v) => pct ? v.toFixed(1) + "%" : plain ? fmtNum(v) + (suffix || "") : fmt(v);
+  const isEdit = !!editable, isEditL = !!editableLiab;
+  if (isEdit || isEditL) {
+    const key = editable || editableLiab;
+    return (
+      <tr style={{ background: C.paperWarm }}>
+        <td style={{ ...td, textAlign: "left", padding: "4px 6px" }}>
+          {isEdit
+            ? <input value={label} onChange={(e) => onLabel && onLabel(key, e.target.value)} placeholder="Name this line"
+                style={{ width: "97%", border: `1px dashed ${C.indigo}`, background: "#fff", borderRadius: 6, padding: "4px 6px", fontSize: 11, fontFamily: "'Source Sans 3', sans-serif", fontWeight: 700, color: C.indigo }} />
+            : <span style={{ fontFamily: "'Source Sans 3', sans-serif", fontWeight: 600, fontSize: 11.5, color: "#5A5349" }}>{label} <span style={{ fontSize: 9, color: C.indigo }}>{"\u270e editable"}</span></span>}
+        </td>
+        {vals.map((v, j) => (
+          <td key={j} style={{ padding: "3px 4px", textAlign: "right" }}>
+            <input type="number" value={Math.round(v) || 0} step={1000}
+              onChange={(e) => { const nv = parseFloat(e.target.value) || 0; isEdit ? onEdit && onEdit(key, j, nv) : onEditLiab && onEditLiab(key, j, nv); }}
+              style={{ width: 74, border: `1px solid ${C.line}`, borderRadius: 5, padding: "4px 3px", fontSize: 10.5, fontFamily: "'IBM Plex Mono', monospace", textAlign: "right", color: C.ink, background: "#fff" }} />
+          </td>
+        ))}
+      </tr>
+    );
+  }
   return (
     <tr style={{ background: bold ? accent + "12" : "transparent" }}>
       <td style={{ ...td, textAlign: "left", fontFamily: "'Source Sans 3', sans-serif", fontWeight: bold ? 800 : 600, fontSize: 11.5, color: bold ? C.ink : "#5A5349" }}>{label}</td>
@@ -667,7 +692,7 @@ function FinRow({ label, vals, bold, pct, plain, suffix, section, accent }) {
     </tr>
   );
 }
-function FinTable({ title, accent, years, rows }) {
+function FinTable({ title, accent, years, rows, onEdit, onLabel, onEditLiab }) {
   const th = { padding: "8px 9px", fontSize: 10, fontWeight: 700, color: "#fff", textAlign: "right", fontFamily: "'IBM Plex Mono', monospace" };
   return (
     <div style={{ marginBottom: 26 }}>
@@ -680,31 +705,42 @@ function FinTable({ title, accent, years, rows }) {
             <th style={{ ...th, textAlign: "left", minWidth: 200 }}>$ / year</th>
             {years.map((y) => <th key={y} style={th}>{y}</th>)}
           </tr></thead>
-          <tbody>{rows.map((r, i) => <FinRow key={i} {...r} accent={accent} />)}</tbody>
+          <tbody>{rows.map((r, i) => <FinRow key={i} {...r} accent={accent} onEdit={onEdit} onLabel={onLabel} onEditLiab={onEditLiab} />)}</tbody>
         </table>
       </div>
     </div>
   );
 }
-function FinancialsTab({ m, s, years, cal, assump }) {
+function FinancialsTab({ m, s, years, cal, assump, custom, setCustom, liab, setLiab }) {
   const Y = m.yrs;
+  const n0 = years.length;
+  const cRow = (key) => (custom[key] || Array(12).fill(0)).slice(0, n0);
+  const setCRow = (key, yi, val) => setCustom({ ...custom, [key]: Object.assign([...(custom[key] || Array(12).fill(0))], { [yi]: val }) });
+  const setCLabel = (key, val) => setCustom({ ...custom, [key + "Label"]: val });
+  const cLabel = (key, dflt) => (custom[key + "Label"] !== undefined ? custom[key + "Label"] : dflt);
+  const incCustom = cRow("income");     // extra receipt line
+  const costCustom = cRow("cost");      // extra cost line (entered positive, subtracted)
   const income = [
     { label: "Calf receipts", vals: Y.map((y) => y.calfRev) },
     { label: "Cull-cow / livestock sales", vals: Y.map((y) => y.cullRev) },
-    { label: "Hunting income", vals: Y.map(() => cal.hunting) },
-    { label: "Total cash receipts", vals: Y.map((y) => y.calfRev + y.cullRev + cal.hunting), bold: true },
+    { label: "Hunting income", vals: Y.map((y) => y.hunt) },
+    { label: cLabel("income", "Your own income line"), vals: incCustom, editable: "income" },
+    { label: "Total cash receipts", vals: Y.map((y, i) => y.calfRev + y.cullRev + y.hunt + (incCustom[i] || 0)), bold: true },
     { label: "Purchased feed", vals: Y.map((y) => y.feedCost) },
     { label: "Replacement cattle", vals: Y.map((y) => y.replCost) },
     { label: "Other production cost", vals: Y.map((y) => y.prodCost) },
-    { label: "Net Cash Farm Income", vals: Y.map((y) => y.ncfi), bold: true },
-    { label: "Net Farm Income (after deprec.)", vals: Y.map((y) => y.nfi), bold: true },
+    { label: cLabel("cost", "Your own cost line"), vals: costCustom, editable: "cost" },
+    { label: "Total cash costs", vals: Y.map((y, i) => y.feedCost + y.replCost + y.prodCost + (costCustom[i] || 0)), bold: true },
+    { label: "Net Cash Farm Income", vals: Y.map((y, i) => y.ncfi + (incCustom[i] || 0) - (costCustom[i] || 0)), bold: true },
+    { label: "Net Farm Income (after deprec.)", vals: Y.map((y, i) => y.nfi + (incCustom[i] || 0) - (costCustom[i] || 0)), bold: true },
   ];
+  const cashCustom = cRow("cash");
   const cash = [
-    { label: "Net cash farm income", vals: Y.map((y) => y.ncfi) },
+    { label: "Net cash farm income (incl. hunting)", vals: Y.map((y, i) => y.ncfi + (incCustom[i] || 0) - (costCustom[i] || 0)) },
     { label: "Off-farm income", vals: Y.map((_, i) => (assump && assump[i] ? assump[i].offFarm : cal.offFarm)) },
-    { label: "Hunting income", vals: Y.map(() => cal.hunting) },
     { label: "Family withdrawals", vals: Y.map((_, i) => -(assump && assump[i] ? assump[i].familyLiving : cal.familyLiving)) },
-    { label: "Ending cash reserve", vals: Y.map((y) => y.cash), bold: true },
+    { label: cLabel("cash", "Your own line (+ inflow / \u2212 outflow)"), vals: cashCustom, editable: "cash" },
+    { label: "Ending cash reserve", vals: Y.map((y, i) => y.cash + cashCustom.slice(0, i + 1).reduce((a, b) => a + (b || 0), 0) + incCustom.slice(0, i + 1).reduce((a, b) => a + (b || 0), 0) - costCustom.slice(0, i + 1).reduce((a, b) => a + (b || 0), 0)), bold: true },
   ];
   const head = m.path;
   // Balance sheet — proper Assets / Liabilities / Net Worth structure (Fast-Base Table 5-D).
@@ -717,33 +753,43 @@ function FinancialsTab({ m, s, years, cal, assump }) {
   const reBS = years.map((_, i) => at(BS_BASE.realEstate, i));
   const machBS = years.map((_, i) => at(BS_BASE.machinery, i));
   const totAssets = years.map((_, i) => cashBS[i] + liveBS[i] + reBS[i] + machBS[i]);
-  const intDebtBS = years.map((_, i) => at(BS_BASE.intDebt, i));
-  const defTaxBS = years.map((_, i) => at(BS_BASE.defTax, i));
-  const totLiab = years.map((_, i) => intDebtBS[i] + defTaxBS[i]);
-  const netWorth = years.map((_, i) => totAssets[i] - totLiab[i]);
+  // Structural liability rows are editable: they are not driven by the stocking decision,
+  // so a producer can replace the representative-ranch figures with their own.
+  const lRow = (key, base) => years.map((_, i) => (liab[key] && liab[key][i] !== undefined && liab[key][i] !== null) ? liab[key][i] : at(base, i));
+  const setLRow = (key, yi, val) => setLiab({ ...liab, [key]: Object.assign([...(liab[key] || Array(12).fill(null))], { [yi]: val }) });
+  const assetCustom = cRow("asset");
+  const liabCustom = cRow("liab");
+  const intDebtBS = lRow("intDebt", BS_BASE.intDebt);
+  const defTaxBS = lRow("defTax", BS_BASE.defTax);
+  const totAssets2 = years.map((_, i) => cashBS[i] + liveBS[i] + reBS[i] + machBS[i] + (assetCustom[i] || 0));
+  const totLiab = years.map((_, i) => intDebtBS[i] + defTaxBS[i] + (liabCustom[i] || 0));
+  const netWorth = years.map((_, i) => totAssets2[i] - totLiab[i]);
+  const nw0 = netWorth[0] || 1;
   const balance = [
     { label: "ASSETS", section: true },
     { label: "Cash reserve", vals: cashBS },
     { label: "Livestock", vals: liveBS },
     { label: "Real estate", vals: reBS },
     { label: "Machinery & equipment", vals: machBS },
-    { label: "Total assets", vals: totAssets, bold: true },
+    { label: cLabel("asset", "Your own asset line"), vals: assetCustom, editable: "asset" },
+    { label: "Total assets", vals: totAssets2, bold: true },
     { label: "LIABILITIES", section: true },
-    { label: "Intermediate-term debt", vals: intDebtBS },
-    { label: "Deferred taxes", vals: defTaxBS },
+    { label: "Intermediate-term debt", vals: intDebtBS, editableLiab: "intDebt" },
+    { label: "Deferred taxes", vals: defTaxBS, editableLiab: "defTax" },
+    { label: cLabel("liab", "Your own liability line"), vals: liabCustom, editable: "liab" },
     { label: "Total liabilities", vals: totLiab, bold: true },
     { label: "NET WORTH", section: true },
     { label: "Net worth (assets − liabilities)", vals: netWorth, bold: true },
-    { label: "Cumulative net-worth growth", vals: years.map((_, i) => m.nwGrowth * ((i + 1) / n)), pct: true, bold: true },
+    { label: "Cumulative net-worth growth", vals: years.map((_, i) => (netWorth[i] / nw0 - 1) * 100), pct: true, bold: true },
   ];
   return (
     <div style={{ paddingTop: 22 }}>
       <div style={{ background: C.paperWarm, border: `1px dashed ${C.line}`, borderRadius: 12, padding: "12px 16px", marginBottom: 20, fontSize: 12.5, color: "#7A7264", lineHeight: 1.5 }}>
         Year-by-year statements for your current strategy: <strong style={{ color: C.ink }}>Destock {s.destockPct}% in Yr {s.destockYear}, restock to {s.restockPct}% by Yr {s.restockYear}</strong>. These flow from the engine and update with every change on the dashboard and Assumptions tabs. The early years carry the heavy feeding bill; watch the ending-cash row for the survival picture, not just the averages.
       </div>
-      <FinTable title="Income Statement" accent={C.orange} years={years} rows={income} />
-      <FinTable title="Cash Flow" accent={C.teal} years={years} rows={cash} />
-      <FinTable title="Balance Sheet" accent={C.indigo} years={years} rows={balance} />
+      <FinTable title="Income Statement" accent={C.orange} years={years} rows={income} onEdit={setCRow} onLabel={setCLabel} onEditLiab={setLRow} />
+      <FinTable title="Cash Flow" accent={C.teal} years={years} rows={cash} onEdit={setCRow} onLabel={setCLabel} onEditLiab={setLRow} />
+      <FinTable title="Balance Sheet" accent={C.indigo} years={years} rows={balance} onEdit={setCRow} onLabel={setCLabel} onEditLiab={setLRow} />
       <FinTable title="Herd inventory (head carried)" accent={C.green} years={years} rows={[{ label: "Cows carried", vals: head, bold: true, plain: true, suffix: " head" }]} />
     </div>
   );
@@ -821,7 +867,7 @@ function DocTab() {
           feed cost&nbsp;&nbsp;&nbsp;= head &times; (full ration while recovering,<br />
           &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; else maintenance feed)<br />
           replacements = (herd growth + culls) &times; bred-cow price<br /><br />
-          NCFI = calf receipts + cull sales − feed − production − replacements
+          NCFI = calf receipts + cull sales + hunting − feed − production − replacements
         </Formula>
         Calibration constants (per-cow feed at full ration ≈ $1,500, maintenance ≈ $317, production cost ≈ $172) come straight from the base-run statements.
       </DocSection>
@@ -829,13 +875,13 @@ function DocTab() {
       <DocSection title="What each headline number means">
         <table style={{ borderCollapse: "collapse", width: "100%", margin: "4px 0", border: `1px solid ${C.line}`, borderRadius: 10, overflow: "hidden" }}>
           <tbody>
-            <DefRow term="Net Cash Farm Income (NCFI)" def="Cash receipts minus cash costs, including the purchase and sale of breeding livestock, but excluding non-cash items like depreciation. The clearest measure of the cash a strategy generates." />
+            <DefRow term="Net Cash Farm Income (NCFI)" def="Cash receipts (calf sales, cull sales, and hunting lease income) minus cash costs (feed, replacements, production), excluding non-cash items like depreciation. Hunting is farm-related income from the land, so it belongs here rather than in the cash-flow statement, where it would be counted twice. Off-farm wages are not farm income and enter only in the cash flow." />
             <DefRow term="Net Farm Income (NFI)" def="NCFI minus depreciation on purchased breeding stock. It runs below NCFI in the recovery years because newly bought cows carry depreciation, the pattern the 2011 study highlights, where the held-herd strategies look better on NFI mid-period." />
             <DefRow term="Ending cash reserve" def="Cumulative cash at the end of the horizon, after off-farm income, hunting, family living, and a rough income-tax estimate. This is the liquidity / survival measure." />
             <DefRow term="Real net worth growth" def="Cumulative change in inflation-adjusted net worth (cattle + land + machinery + cash) over the horizon. The long-term wealth measure." />
           </tbody>
         </table>
-        <p style={{ margin: "10px 0 0" }}>The <strong>Financial results</strong> tab presents these year by year across three statements: an <strong>Income Statement</strong> (receipts, costs, NCFI, NFI), a <strong>Cash Flow</strong> (NCFI plus off-farm and hunting income, less family withdrawals, to an ending cash reserve), and a <strong>Balance Sheet</strong> in the standard form: total assets (cash, livestock, real estate, machinery) less total liabilities (intermediate-term debt and deferred taxes) equals net worth. The balance-sheet structure, real estate, machinery, debt, and deferred taxes follow the published base run; cash and livestock value adjust to the chosen stocking strategy. A herd-inventory row shows the head carried each year. All three statements update live with the dashboard and assumptions.</p>
+        <p style={{ margin: "10px 0 0" }}>Each statement carries an <strong>editable blank row</strong> so a producer can add an item specific to their operation (a lease payment, custom grazing income, an equipment note), and the structural balance-sheet liabilities (intermediate-term debt and deferred taxes) can be typed over year by year, since neither is driven by the stocking decision. Edited liabilities break the exact tie to the published net worth by design: the balance sheet then reflects that producer's position rather than the representative ranch. The <strong>Financial results</strong> tab presents these year by year across three statements: an <strong>Income Statement</strong> (receipts, costs, NCFI, NFI), a <strong>Cash Flow</strong> (NCFI plus off-farm and hunting income, less family withdrawals, to an ending cash reserve), and a <strong>Balance Sheet</strong> in the standard form: total assets (cash, livestock, real estate, machinery) less total liabilities (intermediate-term debt and deferred taxes) equals net worth. The balance-sheet structure, real estate, machinery, debt, and deferred taxes follow the published base run; cash and livestock value adjust to the chosen stocking strategy. A herd-inventory row shows the head carried each year. All three statements update live with the dashboard and assumptions.</p>
       </DocSection>
 
       <DocSection title="The timing &amp; price controls">
@@ -1088,6 +1134,8 @@ export default function App() {
 
   const [riskBand, setRiskBand] = useState(15);
   const [pinned, setPinned] = useState(null);
+  const [custom, setCustom] = useState({});   // user-added statement rows
+  const [liab, setLiab] = useState({});       // user overrides of structural liabilities
   const mPin = useMemo(() => pinned ? model({ ...s, ...pinned, herd0: cal.herd0, calvingRate: cal.calvingRate }, prices, cal, assump) : null, [pinned, s.horizon, prices, cal, assump]);
   const scalePrices = (arr, k) => arr.map((p) => ({ ...p, steer: p.steer * k, heifer: p.heifer * k, cull: p.cull * k }));
   const m = useMemo(() => model({ ...s, herd0: cal.herd0, calvingRate: cal.calvingRate }, prices, cal, assump), [s, prices, cal, assump]);
@@ -1122,7 +1170,7 @@ export default function App() {
 
       <main style={{ maxWidth: 1180, margin: "0 auto", padding: "0 24px 70px" }}>
         {tab === 1 && <AssumptionsTab cal={cal} setCal={setCal} resetCal={() => { setCal({ ...CAL }); setAssump(buildAssump(s.horizon, { ...CAL }, null)); }} assump={assump} setAssump={setAssump} years={years} />}
-        {tab === 2 && <FinancialsTab m={m} s={sEff} years={years} cal={cal} assump={assump} />}
+        {tab === 2 && <FinancialsTab m={m} s={sEff} years={years} cal={cal} assump={assump} custom={custom} setCustom={setCustom} liab={liab} setLiab={setLiab} />}
         {tab === 3 && <OptimizerTab s={sEff} prices={prices} cal={cal} assump={assump} onApply={(d, r) => { setS((st) => ({ ...st, destockPct: d, restockPct: r })); setTab(0); }} />}
         {tab === 4 && <DocTab />}
         {tab === 5 && <TeamTab />}
