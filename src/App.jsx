@@ -1289,7 +1289,10 @@ export default function App() {
               subtitle="The headline figures are anchored to these published 2026 model runs; your price edits scale them. Best strategy is starred."
               right={<button onClick={() => setShowValid(!showValid)} style={{ background: showValid ? C.green : "#fff", color: showValid ? "#fff" : C.green, border: `1.4px solid ${C.green}`, borderRadius: 8, padding: "6px 13px", fontSize: 12.5, fontWeight: 700, cursor: "pointer" }}>{showValid ? "Hide" : "Show runs"}</button>}>
               {showValid
-                ? <ValidationTable s={s} onPick={(d, r) => setS((st) => ({ ...st, destockPct: d, restockPct: r, destockYear: 1, restockYear: 3 }))} />
+                ? <>
+                    <ValidationTable s={s} onPick={(d, r) => { setS((st) => ({ ...st, destockPct: d, restockPct: r, destockYear: 1, restockYear: 3 })); setTrend(-3); }} />
+                    <div style={{ fontSize: 11.5, color: "#8A8276", lineHeight: 1.5, marginTop: 9 }}>Clicking <em>Use</em> loads a run at its published timing and sets the cattle-price trend to <strong style={{ color: C.ink }}>&minus;3%/yr</strong>, the path these runs assumed, so the dashboard reproduces the published figures exactly. Move the trend afterward to explore other price paths.</div>
+                  </>
                 : <div style={{ fontSize: 12.5, color: "#8A8276", lineHeight: 1.5 }}>Best published strategy: <strong style={{ color: C.green }}>Destock {best.d}% / Restock {best.r}%</strong> at {fmt(best.ncfi)}/yr and {fmt(best.endCash)} ending cash. Click <em>Show runs</em> to compare all nine and load any as a starting point.</div>}
             </Panel>
           </div>
